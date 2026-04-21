@@ -3,13 +3,24 @@ import type { User } from "@/types/user/User"
 
 const UserPreferencesSchema = new Schema(
   {
-    maxComfortableWave: { type: Number, required: true },
+    // Legacy field we still keep
     riskTolerance: {
       type: String,
       enum: ["low", "medium", "high"],
-      required: true,
+      default: "low",
     },
-    avoidReefs: { type: Boolean, default: false },
+    notifyStrictness: { type: String, enum: ["strict", "moderate", "lenient"], default: "moderate" },
+
+    // New preference schema (units match onboarding UI)
+    minWaveHeightFt: { type: Number, default: null },
+    maxWaveHeightFt: { type: Number, default: null },
+    maxWindSpeedKnots: { type: Number, default: null },
+    maxDistanceKm: { type: Number, default: null },
+    reefAllowed: { type: Boolean, default: true },
+    sandAllowed: { type: Boolean, default: true },
+    minSwellPeriodSec: { type: Number, default: null },
+
+    freeText: { type: String, default: "" },
   },
   { _id: false }
 )
@@ -62,5 +73,5 @@ const UserSchema = new Schema<User>(
   }
 )
 
-// Prevent model re-compilation during development
+// Prevent model recompile in dev
 export const UserModel = models.User || model<User>("User", UserSchema)

@@ -1,11 +1,8 @@
-/**
- * Exponential distance score (0–1). No hard cap; farther = lower score.
- * Harsh = steeper decay; lenient = gentler decay.
- */
+// Exponential distance score 0–1; harsh/lenient decay
 export function distanceScore(
   distanceKm: number,
-  strictness: "harsh" | "lenient"
+  strictness: "strict" | "moderate" | "lenient"
 ): number {
-  const k = strictness === "harsh" ? 0.06 : 0.02
+  const k = strictness === "strict" ? 0.06 : strictness === "moderate" ? 0.04 : 0.02
   return Math.exp(-k * distanceKm)
 }

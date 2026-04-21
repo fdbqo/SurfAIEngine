@@ -1,10 +1,6 @@
-/**
- * Location utility functions
- */
+// Location helpers
 
-/**
- * Calculate distance between two coordinates in kilometers (Haversine formula)
- */
+// Haversine distance in km
 export function calculateDistance(
   lat1: number,
   lon1: number,
@@ -23,9 +19,7 @@ export function calculateDistance(
   return R * c
 }
 
-/**
- * Check if location is stale (older than 24 hours)
- */
+// Stale if older than 24h
 export function isLocationStale(updatedAt: Date): boolean {
   return Date.now() - updatedAt.getTime() > 24 * 60 * 60 * 1000
 }

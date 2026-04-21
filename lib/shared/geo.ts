@@ -1,12 +1,7 @@
-/**
- * Cross-platform geo helpers (React + React Native safe).
- */
-
+// Cross-platform geo helpers
 export type LatLon = { lat: number; lon: number }
 
-/**
- * Haversine distance in kilometers.
- */
+// Haversine distance in km
 export function distanceKm(a: LatLon, b: LatLon): number {
   const R = 6371
   const dLat = ((b.lat - a.lat) * Math.PI) / 180

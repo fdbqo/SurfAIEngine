@@ -14,15 +14,22 @@ function spotIdFilter(spotId: string): Record<string, unknown> {
   return { spotId }
 }
 
+// Live conditions, no future hours
+const liveOnlyFilter = () => ({ timestamp: { $lte: new Date() } })
+
 export async function getConditionsForSpot(spotId: string): Promise<SpotConditions | null> {
   await connectDB()
-  const doc = await SpotConditionsHourly.findOne(spotIdFilter(spotId))
+  const doc = await SpotConditionsHourly.findOne({
+    ...spotIdFilter(spotId),
+    ...liveOnlyFilter(),
+  })
     .sort({ timestamp: -1 })
     .limit(1)
     .lean()
   if (!doc) return null
+  const sid = String(doc.spotId)
   return {
-    spotId: doc.spotId,
+    spotId: sid,
     swellHeight: doc.swellHeight,
     swellPeriod: doc.swellPeriod,
     swellDirection: doc.swellDirection,
@@ -52,8 +59,8 @@ export async function getConditionsForSpots(
   if (spotIds.length === 0) return []
   await connectDB()
   const validIds = [...new Set(spotIds)]
-  const filter = spotIdsInFilter(validIds)
-  const docs = await SpotConditionsHourly.find(filter as any)
+  const filter = { ...spotIdsInFilter(validIds), ...liveOnlyFilter() }
+  const docs = await SpotConditionsHourly.find(filter as unknown as Record<string, unknown>)
     .sort({ timestamp: -1 })
     .lean()
   const bySpot = new Map<string, SpotConditions>()
@@ -61,7 +68,7 @@ export async function getConditionsForSpots(
     const sid = String(doc.spotId)
     if (!bySpot.has(sid) && validIds.includes(sid)) {
       bySpot.set(sid, {
-        spotId: doc.spotId,
+        spotId: sid,
         swellHeight: doc.swellHeight,
         swellPeriod: doc.swellPeriod,
         swellDirection: doc.swellDirection,
@@ -96,7 +103,7 @@ export async function getConditionsForSpotNextHours(
     .limit(hours)
     .lean()
   return docs.map((doc) => ({
-    spotId: doc.spotId,
+    spotId: String(doc.spotId),
     swellHeight: doc.swellHeight,
     swellPeriod: doc.swellPeriod,
     swellDirection: doc.swellDirection,
@@ -138,41 +145,38 @@ export async function getDailyForecastForSpot(
   }))
 }
 
+/** Returns 3h blocks for scoring; blockScore from DB is not used—we score from swell/wave/wind in computeForecastWindows. */
 export async function getForecast3hForSpot(
   spotId: string,
   days: number = 5
 ): Promise<
   Array<{
     windowStart: Date
-    dayIndex: number
-    hourBlock: number
+    localHour: number
     waveHeight: number
     swellHeight: number
     swellPeriod: number
     windSpeed10m: number
     windDirection: number
-    score?: number
   }>
 > {
   await connectDB()
   const now = new Date()
   const docs = await SpotForecast3h.find({
     ...spotIdFilter(spotId),
-    windowStart: { $gte: now },
+    blockStart: { $gte: now },
   })
-    .sort({ windowStart: 1 })
+    .sort({ blockStart: 1 })
     .limit(days * 8)
     .lean()
   return docs.map((d) => ({
-    windowStart: d.windowStart,
-    dayIndex: d.dayIndex,
-    hourBlock: d.hourBlock,
+    windowStart: d.blockStart,
+    localHour: d.localHour ?? d.blockStart.getUTCHours(),
     waveHeight: d.waveHeight,
     swellHeight: d.swellHeight,
     swellPeriod: d.swellPeriod,
     windSpeed10m: d.windSpeed10m,
     windDirection: d.windDirection,
-    score: d.score,
   }))
 }
 
@@ -195,7 +199,7 @@ export async function getForecastRunHistory(
     day.setUTCHours(0, 0, 0, 0)
     filter.date = { $gte: day, $lt: new Date(day.getTime() + 86400000) }
   }
-  const docs = await SpotForecastRun.find(filter as any)
+  const docs = await SpotForecastRun.find(filter as unknown as Record<string, unknown>)
     .sort({ runAt: -1 })
     .limit(20)
     .lean()

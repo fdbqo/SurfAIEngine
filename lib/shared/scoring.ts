@@ -1,4 +1,7 @@
 import type { SurfScore } from './types'
+import type { Spot } from './spots/Spot'
+import type { SpotConditions } from './types'
+import type { User } from '@/types/user/User'
 
 export type SurferAbility = 'beginner' | 'intermediate' | 'advanced'
 
@@ -15,6 +18,28 @@ export interface ScoringInput {
   spotOrientation: number // degrees (0 = North)
   ability?: SurferAbility
   localHour?: number // 0-23 for nighttime suppression
+}
+
+// Build scoring input from conditions, spot, user
+export function toScoringInput(
+  conditions: SpotConditions,
+  spot: Spot,
+  user: User
+): ScoringInput {
+  const wind2m = conditions.windSpeed2m ?? conditions.windSpeed ?? 0
+  return {
+    swellHeight: conditions.swellHeight,
+    swellPeriod: conditions.swellPeriod,
+    swellDirection: conditions.swellDirection,
+    waveHeight: conditions.waveHeight,
+    wavePeriod: conditions.wavePeriod,
+    windSpeed2m: wind2m,
+    windSpeed10m: conditions.windSpeed10m,
+    windDirection: conditions.windDirection,
+    spotOrientation: spot.orientation,
+    ability: user.skill,
+    localHour: conditions.localHour,
+  }
 }
 
 export function scoreSpot(input: ScoringInput): SurfScore {
@@ -36,10 +61,10 @@ export function scoreSpot(input: ScoringInput): SurfScore {
 
   const windSpeedForScoring = windSpeed2m ?? windSpeed ?? 0
   
-  // Nighttime suppression: reduce score significantly for hours 0-4 and 22-23
+  // Nighttime suppression 0–4, 22–23
   const isNightTime = localHour !== undefined && (localHour < 5 || localHour > 22)
 
-  // swell exposure: check if swell direction aligns with spot orientation
+  // Swell direction vs spot orientation
   let angleDiff = Math.abs(swellDirection - spotOrientation)
   if (angleDiff > 180) {
     angleDiff = 360 - angleDiff
@@ -57,7 +82,7 @@ export function scoreSpot(input: ScoringInput): SurfScore {
     reasons.push('Sheltered from swell')
   }
 
-  // swell power: height * period (distinguishes groundswell from wind swell)
+  // Swell power: height * period
   const power = swellHeight * swellPeriod
 
   if (ability === 'beginner') {
@@ -136,7 +161,7 @@ export function scoreSpot(input: ScoringInput): SurfScore {
     reasons.push('Small surf')
   }
 
-  // wind quality: offshore is opposite of spot orientation
+  // Wind quality: offshore vs spot
   const offshoreDir = (spotOrientation + 180) % 360
   let windDiff = Math.abs(offshoreDir - windDirection)
   if (windDiff > 180) {
@@ -180,9 +205,7 @@ export function scoreSpot(input: ScoringInput): SurfScore {
   }
 }
 
-/**
- * @deprecated Use scoreSpot instead
- */
+// Deprecated: use scoreSpot instead
 export function scoreSpotLegacy(
   conditions: Omit<ScoringInput, 'spotOrientation' | 'swellDirection'>,
   spotLon: number = -8.5

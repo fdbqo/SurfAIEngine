@@ -1,14 +1,7 @@
-export interface SpotLocation {
-  id: string
-  name: string
-  lat: number
-  lon: number
-  orientation: number // degrees (0 = North)
-  type: 'beach' | 'reef' | 'harbour' | 'bay' | 'island'
-  country: string
-  county: string
-  region: string
-}
+import type { Spot } from "./spots/Spot"
+
+// Spot type alias (canonical: Spot)
+export type SpotLocation = Spot
 
 export interface SpotConditions {
   spotId: string

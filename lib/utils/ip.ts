@@ -1,11 +1,8 @@
 import { headers } from "next/headers"
 
-/**
- * Extract client IP from Next.js request headers
- * Handles proxies, CDNs, and load balancers
- */
-export function getClientIp(): string | null {
-  const h = headers()
+// Extract client IP from request headers
+export async function getClientIp(): Promise<string | null> {
+  const h = await headers()
 
   const forwardedFor = h.get("x-forwarded-for")
   if (forwardedFor) {
@@ -15,9 +12,7 @@ export function getClientIp(): string | null {
   return h.get("x-real-ip")
 }
 
-/**
- * Check if IP should be ignored (local/dev IPs)
- */
+// Ignore local/dev IPs
 export function shouldIgnoreIp(ip: string | null): boolean {
   if (!ip) return true
   

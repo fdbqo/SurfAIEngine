@@ -4,15 +4,10 @@ import { resolveIpLocation } from "@/lib/services/ipLocation"
 import { calculateDistance, isLocationStale } from "@/lib/utils/location"
 import type { User } from "@/types/user/User"
 
-/**
- * API route to get IP-based fallback location
- * GET /api/location/fallback?lat=...&lon=...&source=...&updatedAt=...
- * 
- * Returns IP location only if fallback conditions are met
- */
+// IP-based fallback location API
 export async function GET(request: NextRequest) {
   try {
-    // Get current user location from query params (if available)
+// User location from query
     const searchParams = request.nextUrl.searchParams
     const currentLat = searchParams.get("lat")
     const currentLon = searchParams.get("lon")
@@ -20,7 +15,7 @@ export async function GET(request: NextRequest) {
     const currentUpdatedAt = searchParams.get("updatedAt")
 
     // Extract client IP
-    const clientIp = getClientIp()
+    const clientIp = await getClientIp()
     
     if (shouldIgnoreIp(clientIp)) {
       return NextResponse.json(
@@ -46,16 +41,16 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    // Check if we should apply IP location as fallback
+// Apply IP fallback?
     let shouldApply = false
     let reason = ""
 
-    // Condition 1: No existing location
+    // No existing location
     if (!currentLat || !currentLon || !currentSource || !currentUpdatedAt) {
       shouldApply = true
       reason = "No existing location"
     } 
-    // Condition 2: GPS exists but is stale AND IP is far away
+    // Stale GPS and IP far
     else if (currentSource === "gps") {
       const updatedAt = new Date(currentUpdatedAt)
       const isStale = isLocationStale(updatedAt)
@@ -78,7 +73,7 @@ export async function GET(request: NextRequest) {
         reason = "GPS is fresh, no fallback needed"
       }
     }
-    // Condition 3: Existing IP location - can update if stale
+    // Existing IP can update if stale
     else if (currentSource === "ip") {
       const updatedAt = new Date(currentUpdatedAt)
       if (isLocationStale(updatedAt)) {
@@ -100,7 +95,7 @@ export async function GET(request: NextRequest) {
       })
     }
 
-    // Return IP location to apply
+// Return IP location to apply
     return NextResponse.json({
       shouldApply: true,
       reason,

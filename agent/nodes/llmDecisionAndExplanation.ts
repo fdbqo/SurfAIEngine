@@ -1,0 +1,305 @@
+import type { SurfAgentStateType, AgentDecision } from "../state"
+import { agentConfig } from "../config"
+import { ChatOpenAI } from "@langchain/openai"
+import { z } from "zod"
+import { SURF_INTERPRETATION_GUIDE } from "@/lib/agent/surfInterpretationGuide"
+
+function truncate(s: string, max: number): string {
+  if (s.length <= max) return s
+  return s.slice(0, max - 3) + "..."
+}
+
+function hoursSince(tsIso: string, now: Date): number | null {
+  const t = Date.parse(tsIso)
+  if (Number.isNaN(t)) return null
+  return (now.getTime() - t) / (60 * 60 * 1000)
+}
+
+function clamp01(n: number): number {
+  return Math.max(0, Math.min(1, n))
+}
+
+function computeReasoningNeed(state: SurfAgentStateType, args: {
+  hasWindows: boolean
+  memoryConflict: boolean
+  top1?: { distanceKm?: number }
+}): number {
+  const raw = state.user?.rawUser
+  const prefs = raw?.preferences
+  const strictness = prefs?.notifyStrictness === "strict" ? 1 : 0
+  const risk =
+    prefs?.riskTolerance === "low" ? 1 : prefs?.riskTolerance === "medium" ? 0.5 : 0
+  const maxWaveM =
+    typeof prefs?.maxWaveHeightFt === "number"
+      ? prefs.maxWaveHeightFt * 0.3048
+      : state.user?.skillLevel === "beginner"
+        ? 1.2
+        : state.user?.skillLevel === "intermediate"
+          ? 2.5
+          : 4.0
+  // smaller cap → more nuance; bigger cap → low nuance
+  const comfort = clamp01((3 - maxWaveM) / 2)
+  const maxDist = typeof state.user?.maxDistanceKm === "number" ? state.user.maxDistanceKm : 50
+  const distancePref = clamp01(maxDist / 80)
+  const memory = args.memoryConflict ? 1 : 0
+  const windows = args.hasWindows ? 1 : 0
+  const r =
+    0.25 * strictness +
+    0.2 * risk +
+    0.2 * comfort +
+    0.15 * distancePref +
+    0.1 * memory +
+    0.1 * windows
+  return clamp01(r)
+}
+
+const DecisionSchema = z.object({
+  notify: z.boolean(),
+  spotId: z.string().nullable(),
+  when: z.enum(["now", "window"]).nullable(),
+  windowStart: z.string().nullable(),
+  windowEnd: z.string().nullable(),
+  title: z.string().nullable(),
+  message: z.string().nullable(),
+  rationale: z.string().nullable(),
+  whyNotOthers: z.array(z.string()).nullable(),
+  confidence: z.number().min(0).max(1).nullable(),
+})
+
+const TinyGateSchema = z.object({
+  action: z.enum(["stop", "decide_now", "use_full"]),
+  spotId: z.string().nullable(),
+  rationale: z.string().nullable(),
+})
+
+export async function llmDecisionAndExplanation(
+  state: SurfAgentStateType
+): Promise<Partial<SurfAgentStateType>> {
+  const candidates = state.topCandidates ?? []
+  const user = state.user
+  const mode = state.mode
+  const skill = user?.skillLevel ?? "beginner"
+  const validSpotIds = candidates.map((c) => c.spotId)
+  const windows = state.forecastWindows ?? []
+  const minToCallLlm = agentConfig.decisionGate.minScoreToCallLlm
+  const rawPrefs = state.user?.rawUser?.preferences
+  const userNote =
+    typeof rawPrefs?.freeText === "string" && rawPrefs.freeText.trim().length > 0
+      ? rawPrefs.freeText.trim()
+      : null
+  const userNoteLine = userNote ? `\nUser note: ${truncate(userNote, 240)}` : ""
+  const retryFeedback = state.review?.issues?.length
+    ? `\n\nPrevious attempt was rejected. Issues: ${state.review.issues.join("; ")}. You MUST use spotId from the valid list below (exact string, e.g. a 24-char hex ID), NOT the spot name. Fix and return a new decision.`
+    : ""
+
+  // Gated LLM: only call when at least one candidate/window meets threshold
+  const maxSuitability = candidates.reduce(
+    (m, c) => (c.userSuitability > m ? c.userSuitability : m),
+    0
+  )
+  const hasGoodWindow = windows.some((w) => w.userSuitability >= minToCallLlm)
+  if (maxSuitability < minToCallLlm && !hasGoodWindow) {
+    const decision: AgentDecision = {
+      notify: false,
+      message: "No suitable surf windows found.",
+      rationale: "All spots scored below internal thresholds for this user.",
+    }
+    return { decision }
+  }
+
+  const now = new Date()
+  const timeContext = now.toISOString()
+
+  // Deterministic "obvious winner" shortcut: avoid LLM when there’s a clear best choice.
+  // Only applies to "now" decisions (windows are more nuanced).
+  const sorted = [...candidates].sort((a, b) => b.userSuitability - a.userSuitability)
+  const top1 = sorted[0]
+  const top2 = sorted[1]
+  const lead = top1 && top2 ? top1.userSuitability - top2.userSuitability : Infinity
+  const recentlyNotifiedSpotIds = new Set(
+    (state.lastNotifications ?? [])
+      .filter((n) => {
+        const h = hoursSince(n.timestamp, now)
+        return h != null && h >= 0 && h <= agentConfig.reasoning.recentNotificationHours
+      })
+      .map((n) => n.spotId)
+  )
+  const memoryConflict = top1?.spotId ? recentlyNotifiedSpotIds.has(top1.spotId) : false
+  const hasAnyGoodWindow = windows.some((w) => w.userSuitability >= agentConfig.reasoning.strongCandidateMinSuitability)
+
+  const reasoningNeed = computeReasoningNeed(state, {
+    hasWindows: mode === "FORECAST_PLANNER" && windows.length > 0,
+    memoryConflict,
+    top1,
+  })
+
+  if (
+    top1 &&
+    !hasAnyGoodWindow &&
+    !memoryConflict &&
+    top1.userSuitability >= agentConfig.reasoning.strongCandidateMinSuitability &&
+    lead >= agentConfig.reasoning.strongCandidateMinLead &&
+    reasoningNeed < agentConfig.reasoning.budget.low
+  ) {
+    const nameMatch = candidates.find((c) => c.spotId === top1.spotId)?.summary
+    const spotLabel = nameMatch ? nameMatch.split(",")[0]?.replace(/^Spot:\s*/i, "")?.trim() : undefined
+    const decision: AgentDecision = {
+      notify: true,
+      spotId: top1.spotId,
+      when: "now",
+      title: spotLabel ? `Surf looks best at ${spotLabel}` : "Surf looks best right now",
+      message: spotLabel
+        ? `If you want a session today, ${spotLabel} is the best option right now based on your preferences.`
+        : "One spot stands out as the best option right now based on your preferences.",
+      rationale: `We scored spots from live conditions (waves + wind) and your settings. This spot was clearly the best match and ahead of the alternatives, so it’s worth a notification now.`,
+      confidence: 0.8,
+    }
+    return { decision }
+  }
+
+  // Trade-off detector: only spend tokens when there’s something to reason about.
+  const closeRace = top1 && top2 ? lead < agentConfig.reasoning.strongCandidateMinLead : false
+  const tradeoffNeeded = closeRace || memoryConflict || (mode === "FORECAST_PLANNER" && windows.length > 0)
+
+  // Medium step: tiny structured LLM gate (cheap). Runs for trade-offs and medium/high reasoning need.
+  // If reasoningNeed is high, we can skip the tiny gate and go straight to the full prompt.
+  if (tradeoffNeeded && reasoningNeed < agentConfig.reasoning.budget.high) {
+    const tinyLlm = new ChatOpenAI({ model: "gpt-4o-mini", temperature: 0.2 })
+    const tiny = tinyLlm.withStructuredOutput(TinyGateSchema)
+
+    const hasWindows = mode === "FORECAST_PLANNER" && windows.length > 0
+    const windowRule = hasWindows
+      ? `\nIMPORTANT: Forecast windows exist. Do NOT choose action="decide_now". Choose only action="stop" or action="use_full" so the full window-aware reasoning can decide timing.`
+      : ""
+    const tinyPrompt = `Decide whether we should notify a user about surf, without spending many tokens.\n\nCurrent time: ${timeContext}. Mode: ${mode}.\nUser preferences: riskTolerance=${rawPrefs?.riskTolerance ?? "unknown"}, notifyStrictness=${rawPrefs?.notifyStrictness ?? "unknown"}, maxWaveHeightFt=${rawPrefs?.maxWaveHeightFt ?? "unknown"}, maxDistanceKm=${state.user?.maxDistanceKm ?? "unknown"}.${userNoteLine}\n\nDeterministic scoring summary:\n- top1 suitability: ${top1?.userSuitability ?? 0}\n- top2 suitability: ${top2?.userSuitability ?? 0}\n- lead (top1-top2): ${Number.isFinite(lead) ? lead.toFixed(1) : "n/a"}\n- has forecast windows: ${windows.length > 0}\n- recently notified top1 spot: ${memoryConflict}\n\nValid spotIds: ${validSpotIds.join(", ")}\n\nReturn:\n- action="stop" if we should not notify.\n- action="decide_now" if notifying now is straightforward; include spotId.\n- action="use_full" if we need the full candidate/window context to choose well.${windowRule}\n\nKeep rationale short and non-technical.`
+
+    const gate = await tiny.invoke(tinyPrompt)
+    if (gate.action === "stop") {
+      const decision: AgentDecision = {
+        notify: false,
+        message: "No surf notification sent.",
+        rationale: gate.rationale ?? "Not worth notifying based on the available signals.",
+      }
+      return { decision }
+    }
+    if (
+      gate.action === "decide_now" &&
+      !(mode === "FORECAST_PLANNER" && windows.length > 0) &&
+      gate.spotId &&
+      validSpotIds.includes(gate.spotId)
+    ) {
+      const chosen = candidates.find((c) => c.spotId === gate.spotId)
+      const spotLabel = chosen?.summary
+        ? chosen.summary.split(",")[0]?.replace(/^Spot:\s*/i, "")?.trim()
+        : undefined
+      const distText =
+        chosen?.distanceKm != null ? ` about ${Math.round(chosen.distanceKm)}km away` : ""
+      const decision: AgentDecision = {
+        notify: true,
+        spotId: gate.spotId,
+        when: "now",
+        title: spotLabel ? `Surf looks best at ${spotLabel}` : "Surf looks best right now",
+        message: spotLabel
+          ? `${spotLabel} looks like the best call right now${distText}.`
+          : `One spot stands out as the best call right now.`,
+        rationale:
+          gate.rationale ??
+          `Based on the current conditions and your preferences, this is the strongest option right now.`,
+        confidence: 0.7,
+      }
+      return { decision }
+    }
+    // else: fall through to full prompt
+  }
+
+  const llm = new ChatOpenAI({ model: "gpt-4o-mini", temperature: 0.2 })
+  const structured = llm.withStructuredOutput(DecisionSchema)
+
+  const maxChars = agentConfig.prompt.summaryMaxChars
+  const windowsSection =
+    mode === "FORECAST_PLANNER" && windows.length
+      ? `
+
+Upcoming windows (each line includes distance, time-of-day, lead time; optional "forecast confidence" < 1 means further out and less certain—prefer over 'now' when clearly better and realistic):
+${windows.map((w) => `- ${truncate(w.summary, maxChars)}`).join("\n")}`
+      : ""
+
+  const lastNotifs = state.lastNotifications ?? []
+  const lastNotifsText =
+    lastNotifs.length > 0
+      ? `\nRecent notifications sent to this user: ${lastNotifs.map((n) => `${n.spotId} (${n.timestamp})`).join("; ")}. Prefer not to re-notify the same spot soon unless conditions are clearly better.`
+      : ""
+
+  const prompt = `You are a surf notification agent. Decide whether to notify the user about surf conditions.
+
+${SURF_INTERPRETATION_GUIDE}
+
+User skill: ${skill}. Mode: ${mode}. Current time: ${timeContext}.${lastNotifsText}${userNoteLine}
+
+The candidate and window scores below were computed deterministically from surf conditions (wave height, period, wind, etc.).
+
+Valid spotIds (you MUST set spotId to one of these exact strings when notifying; do NOT use the spot name):
+${validSpotIds.join(", ")}
+
+Top candidates (use only this data; do not invent):
+${candidates.map((c) => `- ${truncate(c.summary, maxChars)}`).join("\n")}
+
+${windowsSection}
+
+Notification timing: consider distance, lead time, and time of day when choosing a window—prefer options that give the user enough time to get there and that fit typical schedules.
+
+Decision rules:
+- If a future window in the list is clearly better for this user than 'now' and realistic given distance and timing, set notify=true, when="window", spotId to that window's spotId, and windowStart/windowEnd to that window's interval.
+- Otherwise, if current conditions are good enough, set notify=true, when="now", and spotId to the best current candidate.
+- If nothing is worth notifying, set notify=false, set spotId to null, and explain in rationale; set whyNotOthers as short bullets.
+- In rationale: when you chose one time over another (e.g. "now" vs a future window, or one window over others), briefly explain why (e.g. "Afternoon window has better conditions and enough lead time; 6am window is too far and too early."). Use whyNotOthers for short bullets on why you did not pick other options.
+- When notify=true: you MUST provide a short non-empty title and a clear non-empty message.
+  - The message MUST mention the spot name (from the summaries) and whether it's for now vs a future window.
+  - The message MUST be user-facing and simple: 1–2 short sentences.
+  - The message SHOULD include timing (preferred): a time-of-day label from the summaries, a specific window time (e.g. "16:00–18:00"), or relative timing (e.g. "in ~3h"), especially for when="window".
+  - Do NOT include any explicit ratings or scoring like "10/10" or "8 out of 10", and do NOT use internal terms like "score", "rating", "confidence", "suitability", "envScore", or "userSuitability".
+  - Avoid generic hype like "perfect weather" unless explicitly supported by the inputs (we do not have weather data).
+  - Put detailed justification (why this spot vs others, waves/wind trade-offs, guardrails) in rationale. It's OK if the message mentions just one or two concrete user-facing detail (like timing).
+
+Return only structured fields. For dates, use ISO strings for windowStart/windowEnd.${retryFeedback}`
+
+  const raw = await structured.invoke(prompt)
+  const decision: AgentDecision = {
+    notify: raw.notify,
+    spotId: raw.spotId ?? undefined,
+    when: raw.when === "window" ? "next_window" : (raw.when ?? "now"),
+    windowStart: raw.windowStart ? new Date(raw.windowStart) : undefined,
+    windowEnd: raw.windowEnd ? new Date(raw.windowEnd) : undefined,
+    title: raw.title ?? undefined,
+    message: raw.message ?? undefined,
+    rationale: raw.rationale ?? undefined,
+    whyNotOthers: raw.whyNotOthers ?? undefined,
+    confidence: raw.confidence ?? undefined,
+  }
+
+  // If the LLM returns empty strings, generate user-facing copy from deterministic context.
+  const titleBlank = !decision.title || decision.title.trim().length === 0
+  const messageBlank = !decision.message || decision.message.trim().length === 0
+  if (decision.notify && decision.spotId && (titleBlank || messageBlank)) {
+    const chosen = candidates.find((c) => c.spotId === decision.spotId)
+    const spotLabel = chosen?.summary
+      ? chosen.summary.split(",")[0]?.replace(/^Spot:\s*/i, "")?.trim()
+      : undefined
+    const distText = chosen?.distanceKm != null ? ` (~${Math.round(chosen.distanceKm)}km away)` : ""
+    if (titleBlank) {
+      decision.title = spotLabel ? `Surf looks best at ${spotLabel}` : "Surf looks best"
+    }
+    if (messageBlank) {
+      if (decision.when === "next_window" && decision.windowStart) {
+        decision.message = spotLabel
+          ? `A good window is coming up at ${spotLabel}${distText}.`
+          : "A better surf window is coming up soon."
+      } else {
+        decision.message = spotLabel
+          ? `${spotLabel} looks like the best call right now${distText}.`
+          : `One spot stands out as the best call right now.`
+      }
+    }
+  }
+  return { decision }
+}

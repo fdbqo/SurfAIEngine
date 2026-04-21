@@ -6,8 +6,30 @@ export const allSpots: Spot[] = [
   ...connachtSpots,
 ]
 
+const spotByIdCache = new Map<string, Spot>()
+function buildSpotCache(): Map<string, Spot> {
+  if (spotByIdCache.size === 0) {
+    for (const s of allSpots) {
+      spotByIdCache.set(s.id, s)
+    }
+  }
+  return spotByIdCache
+}
+
 export function getSpotById(id: string): Spot | undefined {
-  return allSpots.find((s) => s.id === id)
+  const cache = buildSpotCache()
+  return cache.get(id)
+}
+
+/** Batch lookup by ids; uses same cache as getSpotById. Returns Map for O(1) access by id. */
+export function getSpotsById(ids: string[]): Map<string, Spot> {
+  const cache = buildSpotCache()
+  const out = new Map<string, Spot>()
+  for (const id of ids) {
+    const s = cache.get(id)
+    if (s) out.set(id, s)
+  }
+  return out
 }
 
 export function getSpotsByRegion(region: string): Spot[] {

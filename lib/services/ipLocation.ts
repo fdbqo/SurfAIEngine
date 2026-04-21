@@ -1,22 +1,13 @@
-/**
- * IP-based geolocation service
- * Resolves IP address to approximate location (city/region level)
- * Acceptable error: 20-100km
- */
-
+// IP geolocation (city/region level)
 export interface IPLocationResult {
   lat: number
   lon: number
 }
 
-/**
- * Resolve IP address to location using ipapi.co
- * Falls back to ip-api.com if first fails
- * Returns null on failure (does not throw)
- */
+// Resolve IP to location; ipapi.co then ip-api.com
 export async function resolveIpLocation(ip: string): Promise<IPLocationResult | null> {
   try {
-    // Try ipapi.co first
+    // ipapi.co first
     const response = await fetch(`https://ipapi.co/${ip}/json/`, {
       headers: {
         "Accept": "application/json",
@@ -36,12 +27,12 @@ export async function resolveIpLocation(ip: string): Promise<IPLocationResult | 
     console.warn("ipapi.co failed, trying fallback:", error)
   }
 
-  // Fallback to ip-api.com
+  // Fallback ip-api.com
   try {
     const response = await fetch(
       `http://ip-api.com/json/${ip}?fields=status,lat,lon`,
       {
-        next: { revalidate: 3600 }, // Cache for 1 hour
+        next: { revalidate: 3600 }, // 1h cache
       }
     )
 

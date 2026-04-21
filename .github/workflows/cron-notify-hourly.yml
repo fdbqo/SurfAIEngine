@@ -1,0 +1,23 @@
+# Vercel Hobby only allows 1 native cron/day. This workflow runs hourly on GitHub's clock
+# and hits your deployed /api/cron/notify (same as a full Vercel Pro cron would).
+#
+# Repo secrets (Settings → Secrets → Actions):
+#   VERCEL_APP_URL   e.g. https://your-project.vercel.app
+#   CRON_SECRET      same value as CRON_SECRET in Vercel env
+name: Cron notify (hourly)
+on:
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch:
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: GET /api/cron/notify
+        run: |
+          curl -sS -f \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            "${VERCEL_APP_URL}/api/cron/notify"
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          VERCEL_APP_URL: ${{ secrets.VERCEL_APP_URL }}
