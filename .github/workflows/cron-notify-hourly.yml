@@ -1,9 +1,6 @@
-# Vercel Hobby only allows 1 native cron/day. This workflow runs hourly on GitHub's clock
-# and hits your deployed /api/cron/notify (same as a full Vercel Pro cron would).
-#
-# Repo secrets (Settings → Secrets → Actions):
-#   VERCEL_APP_URL   e.g. https://your-project.vercel.app
-#   CRON_SECRET      same value as CRON_SECRET in Vercel env
+# Vercel Hobby only lets me have 1 native cron/day. This is a problem which is why this action flow is used. This workflow runs hourly on GitHub's clock
+# and hits deployed /api/cron/notify
+
 name: Cron notify (hourly)
 on:
   schedule:
@@ -13,11 +10,21 @@ jobs:
   notify:
     runs-on: ubuntu-latest
     steps:
-      - name: GET /api/cron/notify
+      - name: Require secrets
+        env:
+          VERCEL_APP_URL: ${{ secrets.VERCEL_APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
+          if [ -z "$VERCEL_APP_URL" ] || [ -z "$CRON_SECRET" ]; then
+            echo "::error::Add repository secrets VERCEL_APP_URL and CRON_SECRET (GitHub → repo → Settings → Secrets and variables → Actions)."
+            exit 1
+          fi
+      - name: GET /api/cron/notify
+        env:
+          VERCEL_APP_URL: ${{ secrets.VERCEL_APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          BASE="${VERCEL_APP_URL%/}"
           curl -sS -f \
             -H "Authorization: Bearer ${CRON_SECRET}" \
-            "${VERCEL_APP_URL}/api/cron/notify"
-        env:
-          CRON_SECRET: ${{ secrets.CRON_SECRET }}
-          VERCEL_APP_URL: ${{ secrets.VERCEL_APP_URL }}
+            "${BASE}/api/cron/notify"

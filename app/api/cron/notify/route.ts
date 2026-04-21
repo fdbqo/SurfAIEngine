@@ -4,12 +4,15 @@ import { cronTickNotify } from "@/lib/notifications/notifications"
 export const runtime = "nodejs"
 
 function cronSecretOk(req: Request): boolean {
-  const expected = process.env.CRON_SECRET
+  const expected = process.env.CRON_SECRET?.trim()
   if (!expected) return true
   const url = new URL(req.url)
-  if (url.searchParams.get("secret") === expected) return true
+  if (url.searchParams.get("secret")?.trim() === expected) return true
   const auth = req.headers.get("authorization")
-  if (auth?.startsWith("Bearer ") && auth.slice(7).trim() === expected) return true
+  if (auth?.toLowerCase().startsWith("bearer ")) {
+    const token = auth.slice(7).trim()
+    if (token === expected) return true
+  }
   return false
 }
 

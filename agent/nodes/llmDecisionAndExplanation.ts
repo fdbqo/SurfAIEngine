@@ -3,6 +3,10 @@ import { agentConfig } from "../config"
 import { ChatOpenAI } from "@langchain/openai"
 import { z } from "zod"
 import { SURF_INTERPRETATION_GUIDE } from "@/lib/agent/surfInterpretationGuide"
+import {
+  applyForecastPlannerNoNowOverride,
+  isForecastBlockSessionNow,
+} from "../utils/forecastNoNowSession"
 
 function truncate(s: string, max: number): string {
   if (s.length <= max) return s
@@ -133,13 +137,16 @@ export async function llmDecisionAndExplanation(
     top1,
   })
 
+  const blockNowForForecast = isForecastBlockSessionNow(state, now).block
+
   if (
     top1 &&
     !hasAnyGoodWindow &&
     !memoryConflict &&
     top1.userSuitability >= agentConfig.reasoning.strongCandidateMinSuitability &&
     lead >= agentConfig.reasoning.strongCandidateMinLead &&
-    reasoningNeed < agentConfig.reasoning.budget.low
+    reasoningNeed < agentConfig.reasoning.budget.low &&
+    !(mode === "FORECAST_PLANNER" && blockNowForForecast)
   ) {
     const nameMatch = candidates.find((c) => c.spotId === top1.spotId)?.summary
     const spotLabel = nameMatch ? nameMatch.split(",")[0]?.replace(/^Spot:\s*/i, "")?.trim() : undefined
@@ -154,7 +161,7 @@ export async function llmDecisionAndExplanation(
       rationale: `We scored spots from live conditions (waves + wind) and your settings. This spot was clearly the best match and ahead of the alternatives, so it’s worth a notification now.`,
       confidence: 0.8,
     }
-    return { decision }
+    return { decision: applyForecastPlannerNoNowOverride(state, decision, now) }
   }
 
   // Trade-off detector: only spend tokens when there’s something to reason about.
@@ -185,6 +192,7 @@ export async function llmDecisionAndExplanation(
     if (
       gate.action === "decide_now" &&
       !(mode === "FORECAST_PLANNER" && windows.length > 0) &&
+      !(mode === "FORECAST_PLANNER" && blockNowForForecast) &&
       gate.spotId &&
       validSpotIds.includes(gate.spotId)
     ) {
@@ -207,7 +215,7 @@ export async function llmDecisionAndExplanation(
           `Based on the current conditions and your preferences, this is the strongest option right now.`,
         confidence: 0.7,
       }
-      return { decision }
+      return { decision: applyForecastPlannerNoNowOverride(state, decision, now) }
     }
     // else: fall through to full prompt
   }
@@ -248,8 +256,13 @@ ${windowsSection}
 
 Notification timing: consider distance, lead time, and time of day when choosing a window—prefer options that give the user enough time to get there and that fit typical schedules.
 
+FORECAST_PLANNER — local time and "now":
+- If any candidate line says the time of day is "night" (roughly 21:00–05:00 local at the break) or "evening" in a way that is too late for a spontaneous session, you MUST NOT set when="now". Pick the best future window from the list (when="window") or set notify=false. Never ask the user to go surfing immediately in the last hours of the day; suggest a morning or daytime window the next day instead.
+- When in doubt in FORECAST mode after dark, prefer a window starting tomorrow morning or midday over "now".
+
 Decision rules:
 - If a future window in the list is clearly better for this user than 'now' and realistic given distance and timing, set notify=true, when="window", spotId to that window's spotId, and windowStart/windowEnd to that window's interval.
+- For FORECAST_PLANNER, only set when="now" if local time of day is plausibly still surfable the same day (e.g. morning/afternoon) and a same-day session is realistic; if summaries say "night", use a window, not "now".
 - Otherwise, if current conditions are good enough, set notify=true, when="now", and spotId to the best current candidate.
 - If nothing is worth notifying, set notify=false, set spotId to null, and explain in rationale; set whyNotOthers as short bullets.
 - In rationale: when you chose one time over another (e.g. "now" vs a future window, or one window over others), briefly explain why (e.g. "Afternoon window has better conditions and enough lead time; 6am window is too far and too early."). Use whyNotOthers for short bullets on why you did not pick other options.
@@ -301,5 +314,7 @@ Return only structured fields. For dates, use ISO strings for windowStart/window
       }
     }
   }
-  return { decision }
+
+  const afterNoNow = applyForecastPlannerNoNowOverride(state, decision, now)
+  return { decision: afterNoNow }
 }

@@ -66,6 +66,11 @@ export const agentConfig = {
   prompt: {
     summaryMaxChars: 280,
   },
+  /** FORECAST_PLANNER: do not use when=now during local night (and optionally evening). */
+  forecastNoNow: {
+    /** Also treat 18:00–21:00 local as "no go now" in forecast mode. */
+    alsoBlockEvening: false,
+  },
   /** Future discount: no decrease for today/tomorrow (<=48h); then declining. */
   notificationTiming: {
     hoursNoDecrease: 48,
