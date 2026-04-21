@@ -12,7 +12,7 @@ export interface ISpotForecastRun extends Document {
 const SpotForecastRunSchema = new Schema<ISpotForecastRun>(
   {
     spotId: { type: String, required: true, index: true },
-    date: { type: Date, required: true, index: true },
+    date: { type: Date, required: true },
     modelRun: { type: String, required: true, index: true },
     runAt: { type: Date, required: true },
     waveHeight: { type: Number, required: false },

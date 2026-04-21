@@ -23,7 +23,7 @@ export interface ISpotForecastDaily extends Document {
 const SpotForecastDailySchema = new Schema<ISpotForecastDaily>(
   {
     spotId: { type: String, required: true, index: true },
-    date: { type: Date, required: true, index: true },
+    date: { type: Date, required: true },
     dayIndex: { type: Number, required: true },
     swellHeight: { type: Number, required: true },
     swellPeriod: { type: Number, required: true },

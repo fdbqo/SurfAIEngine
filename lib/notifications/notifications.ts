@@ -675,19 +675,44 @@ export async function cronTickNotify(mode: "LIVE_NOTIFY" | "FORECAST_PLANNER" = 
   const profiles = await listDeviceProfilesForCron()
   const seenUserIds = new Set<string>()
   const processedUserIds: string[] = []
+  const skip = {
+    duplicateUserId: 0,
+    noActiveTargets: 0,
+    scheduleNotDue: 0,
+    noScheduleRow: 0,
+  }
 
   for (const p of profiles) {
     const userId = p.userId
-    if (seenUserIds.has(userId)) continue
+    if (seenUserIds.has(userId)) {
+      skip.duplicateUserId += 1
+      continue
+    }
     const targets = await listActiveDeviceTargetsForUser(userId)
-    if (targets.length === 0) continue
+    if (targets.length === 0) {
+      skip.noActiveTargets += 1
+      continue
+    }
     seenUserIds.add(userId)
     const sched = await getOrInitSchedule(userId)
-    if (!sched) continue
-    if (sched.nextRunAt && new Date(sched.nextRunAt).getTime() > now.getTime()) continue
+    if (!sched) {
+      skip.noScheduleRow += 1
+      continue
+    }
+    if (sched.nextRunAt && new Date(sched.nextRunAt).getTime() > now.getTime()) {
+      skip.scheduleNotDue += 1
+      continue
+    }
     await NotificationScheduleModel.updateOne({ userId }, { $set: { lastRunAt: now } }, { upsert: true })
-    await runAgentAndMaybeNotify({ userId, mode })
+    const agentOut = await runAgentAndMaybeNotify({ userId, mode })
     processedUserIds.push(userId)
+    console.info("[cronTickNotify] user", {
+      userId,
+      mode,
+      effectiveOutcome: (agentOut as { effectiveOutcome?: string }).effectiveOutcome,
+      effectiveReason: (agentOut as { effectiveReason?: string }).effectiveReason,
+      actionTaken: (agentOut as { actionTaken?: string }).actionTaken,
+    })
   }
 
   let mockProcessed = 0
@@ -703,7 +728,22 @@ export async function cronTickNotify(mode: "LIVE_NOTIFY" | "FORECAST_PLANNER" = 
     }
   }
 
-  return { ok: true, processed: processedUserIds.length, mockProcessed, userIds: processedUserIds }
+  console.info("[cronTickNotify] summary", {
+    mode,
+    eligibleProfiles: profiles.length,
+    processed: processedUserIds.length,
+    mockProcessed,
+    skip,
+    userIds: processedUserIds,
+  })
+
+  return {
+    ok: true,
+    processed: processedUserIds.length,
+    mockProcessed,
+    userIds: processedUserIds,
+    skip,
+  }
 }
 
 /** @deprecated Use `cronTickNotify`; name kept for existing imports. */
