@@ -1,6 +1,7 @@
 import type { SurfAgentStateType, InterpretedSpot } from "../state"
 import { isDefinitelyUnsuitable } from "@/lib/shared/suitableSpotFilter"
 import { getSpotById } from "@/lib/shared/spots"
+import { isActiveUserMax, isActiveUserMin } from "@/lib/shared/preferenceBounds"
 
 const FLAT_THRESHOLD = 0.2
 const EXTREME_WIND_KMH = 35
@@ -28,19 +29,19 @@ export function prefilterUnsafeOrPointless(
     if (wind >= EXTREME_WIND_KMH) return false
     if (prefs?.reefAllowed === false && spot.type === "reef") return false
     if (prefs?.sandAllowed === false && spot.type === "beach") return false
-    if (typeof prefs?.minWaveHeightFt === "number") {
+    if (isActiveUserMin(prefs?.minWaveHeightFt)) {
       const minWaveM = prefs.minWaveHeightFt * FT_TO_M
       if (conditions.waveHeight < minWaveM) return false
     }
-    if (typeof prefs?.maxWaveHeightFt === "number") {
+    if (isActiveUserMax(prefs?.maxWaveHeightFt)) {
       const maxWaveM = prefs.maxWaveHeightFt * FT_TO_M
       if (conditions.waveHeight > maxWaveM) return false
     }
-    if (typeof prefs?.maxWindSpeedKnots === "number") {
+    if (isActiveUserMax(prefs?.maxWindSpeedKnots)) {
       const maxWindKmh = prefs.maxWindSpeedKnots * KTS_TO_KMH
       if (wind > maxWindKmh) return false
     }
-    if (typeof prefs?.minSwellPeriodSec === "number") {
+    if (isActiveUserMin(prefs?.minSwellPeriodSec)) {
       if (conditions.swellPeriod < prefs.minSwellPeriodSec) return false
     }
     if (user.skill === "beginner" && (spot.type === "reef" || spot.type === "harbour")) return false

@@ -6,6 +6,7 @@ import { distanceScore } from "@/lib/shared/distanceScore"
 import { scoreSpot, toScoringInput } from "@/lib/shared/scoring"
 import type { SpotConditions } from "@/lib/shared/types"
 import { FALLBACK_LOCATION } from "@/lib/shared/defaults"
+import { isActiveUserMax } from "@/lib/shared/preferenceBounds"
 
 export function scoreSpots(state: SurfAgentStateType): Partial<SurfAgentStateType> {
   const spots = state.spots ?? []
@@ -16,12 +17,11 @@ export function scoreSpots(state: SurfAgentStateType): Partial<SurfAgentStateTyp
 
   const loc = getLocationForDistance(user) ?? FALLBACK_LOCATION
   const strictness = user.rawUser.preferences?.notifyStrictness ?? "lenient"
-  const maxDistanceKm =
-    typeof user.rawUser.preferences?.maxDistanceKm === "number"
-      ? user.rawUser.preferences.maxDistanceKm
-      : typeof user.maxDistanceKm === "number"
-        ? user.maxDistanceKm
-        : null
+  const maxDistanceKm = isActiveUserMax(user.rawUser.preferences?.maxDistanceKm)
+    ? user.rawUser.preferences.maxDistanceKm
+    : isActiveUserMax(user.maxDistanceKm)
+      ? user.maxDistanceKm
+      : null
   const scored: ScoredSpot[] = []
 
   for (const s of spots) {

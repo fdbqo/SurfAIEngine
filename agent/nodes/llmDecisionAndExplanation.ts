@@ -4,6 +4,11 @@ import { ChatOpenAI } from "@langchain/openai"
 import { z } from "zod"
 import { SURF_INTERPRETATION_GUIDE } from "@/lib/agent/surfInterpretationGuide"
 import {
+  UNSET_MAX_DISTANCE_KM,
+  UNSET_MAX_WAVE_HEIGHT_M,
+  isActiveUserMax,
+} from "@/lib/shared/preferenceBounds"
+import {
   applyForecastPlannerNoNowOverride,
   isForecastBlockSessionNow,
 } from "../utils/forecastNoNowSession"
@@ -33,17 +38,13 @@ function computeReasoningNeed(state: SurfAgentStateType, args: {
   const strictness = prefs?.notifyStrictness === "strict" ? 1 : 0
   const risk =
     prefs?.riskTolerance === "low" ? 1 : prefs?.riskTolerance === "medium" ? 0.5 : 0
-  const maxWaveM =
-    typeof prefs?.maxWaveHeightFt === "number"
-      ? prefs.maxWaveHeightFt * 0.3048
-      : state.user?.skillLevel === "beginner"
-        ? 1.2
-        : state.user?.skillLevel === "intermediate"
-          ? 2.5
-          : 4.0
+  const maxWaveM = isActiveUserMax(prefs?.maxWaveHeightFt)
+    ? prefs!.maxWaveHeightFt! * 0.3048
+    : UNSET_MAX_WAVE_HEIGHT_M
   // smaller cap → more nuance; bigger cap → low nuance
   const comfort = clamp01((3 - maxWaveM) / 2)
-  const maxDist = typeof state.user?.maxDistanceKm === "number" ? state.user.maxDistanceKm : 50
+  const rawMaxDist = state.user?.rawUser?.preferences?.maxDistanceKm
+  const maxDist = isActiveUserMax(rawMaxDist) ? rawMaxDist : UNSET_MAX_DISTANCE_KM
   const distancePref = clamp01(maxDist / 80)
   const memory = args.memoryConflict ? 1 : 0
   const windows = args.hasWindows ? 1 : 0

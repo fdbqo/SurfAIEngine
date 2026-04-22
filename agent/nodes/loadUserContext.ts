@@ -2,6 +2,7 @@ import type { SurfAgentStateType } from "../state"
 import { agentConfig } from "../config"
 import { getUserForAgent } from "@/lib/db/userForAgent"
 import type { AgentUserContext } from "../state"
+import { isActiveUserMax } from "@/lib/shared/preferenceBounds"
 
 export async function loadUserContext(
   state: SurfAgentStateType
@@ -16,8 +17,8 @@ export async function loadUserContext(
     skillLevel: user.skill,
     usualLocation: user.usualLocation ? { lat: user.usualLocation.lat, lon: user.usualLocation.lon } : undefined,
     currentLocation: user.lastLocation ? { lat: user.lastLocation.lat, lon: user.lastLocation.lon } : undefined,
-    // maxDistanceKm: null means "no limit" (leave undefined so downstream can interpret as infinite)
-    maxDistanceKm: typeof prefs?.maxDistanceKm === "number" ? prefs.maxDistanceKm : undefined,
+    // maxDistanceKm: only positive values cap distance; null/0 = no limit (undefined).
+    maxDistanceKm: isActiveUserMax(prefs?.maxDistanceKm) ? prefs.maxDistanceKm : undefined,
     preferredBreaks: (
       prefs
         ? ([

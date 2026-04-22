@@ -1,6 +1,7 @@
 import type { Spot } from "./spots/Spot"
 import type { SpotConditions } from "./types"
 import type { User } from "@/types/user/User"
+import { UNSET_MAX_WAVE_HEIGHT_M, UNSET_MAX_WIND_KMH, isActiveUserMax } from "./preferenceBounds"
 
 export type UnsuitableResult = { unsuitable: boolean; reason?: string }
 
@@ -11,26 +12,22 @@ export function isDefinitelyUnsuitable(
   user: User
 ): UnsuitableResult {
   const { skill, preferences } = user
-  const maxWave =
-    typeof preferences?.maxWaveHeightFt === "number"
-      ? preferences.maxWaveHeightFt * 0.3048
-      : skill === "beginner"
-        ? 1.2
-        : skill === "intermediate"
-          ? 2.5
-          : 99
-  const maxWindKmh =
-    typeof preferences?.maxWindSpeedKnots === "number"
-      ? preferences.maxWindSpeedKnots * 1.852
-      : null
+  // `null`/missing = no user wave ceiling ("any" in the wizard) — do not fall back to
+  // skill-based 1.2m/2.5m caps, or "any" would still filter large waves.
+  const maxWave = isActiveUserMax(preferences?.maxWaveHeightFt)
+    ? preferences.maxWaveHeightFt * 0.3048
+    : UNSET_MAX_WAVE_HEIGHT_M
+  const maxWindKmh = isActiveUserMax(preferences?.maxWindSpeedKnots)
+    ? preferences.maxWindSpeedKnots * 1.852
+    : UNSET_MAX_WIND_KMH
   const windKmh = conditions.windSpeed10m
   const waveHeight = conditions.waveHeight
 
   switch (skill) {
     case "beginner":
       if (waveHeight > maxWave) return { unsuitable: true, reason: `Wave height ${waveHeight.toFixed(1)}m above max comfortable ${maxWave}m for beginners` }
-      if (maxWindKmh != null ? windKmh > maxWindKmh : windKmh > 18) {
-        const cap = maxWindKmh != null ? `${maxWindKmh.toFixed(0)} km/h` : "18 km/h"
+      if (windKmh > maxWindKmh) {
+        const cap = `${maxWindKmh.toFixed(0)} km/h`
         return { unsuitable: true, reason: `Wind ${windKmh.toFixed(0)} km/h too strong (cap ${cap})` }
       }
       return { unsuitable: false }

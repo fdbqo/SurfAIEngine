@@ -9,6 +9,7 @@ import type { SpotConditions } from "@/lib/shared/types"
 import { getConditionsForSpots } from "@/lib/db/services/spotConditionsService"
 import { FALLBACK_LOCATION } from "@/lib/shared/defaults"
 import type { AgentUserContext } from "../state"
+import { isActiveUserMax } from "@/lib/shared/preferenceBounds"
 
 export async function toolExecutorNode(
   state: SurfAgentStateType
@@ -27,8 +28,7 @@ export async function toolExecutorNode(
         skillLevel: user.skill,
         usualLocation: user.usualLocation ? { lat: user.usualLocation.lat, lon: user.usualLocation.lon } : undefined,
         currentLocation: user.lastLocation ? { lat: user.lastLocation.lat, lon: user.lastLocation.lon } : undefined,
-        // maxDistanceKm: null means "no limit" (leave undefined so downstream can interpret as infinite)
-        maxDistanceKm: typeof prefs?.maxDistanceKm === "number" ? prefs.maxDistanceKm : undefined,
+        maxDistanceKm: isActiveUserMax(prefs?.maxDistanceKm) ? prefs.maxDistanceKm : undefined,
         preferredBreaks: (prefs
           ? ([
               prefs.sandAllowed !== false && "beach",
@@ -51,10 +51,9 @@ export async function toolExecutorNode(
     const loc = getLocationForDistance(state.user) ?? (user.lastLocation
       ? { lat: user.lastLocation.lat, lon: user.lastLocation.lon }
       : user.usualLocation ?? FALLBACK_LOCATION)
-    const maxDist =
-      typeof state.user?.maxDistanceKm === "number"
-        ? state.user.maxDistanceKm
-        : Number.POSITIVE_INFINITY
+    const maxDist = isActiveUserMax(state.user?.maxDistanceKm)
+      ? state.user.maxDistanceKm
+      : Number.POSITIVE_INFINITY
     const withDistance = getAllSpotsWithDistance(allSpots, loc)
     const within = withDistance.filter((s) => s.distanceKm <= maxDist).slice(0, 30)
     return {

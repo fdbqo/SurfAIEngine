@@ -4,6 +4,7 @@ import { getLocationForDistance } from "../state"
 import { allSpots, getSpotById } from "@/lib/shared/spots"
 import { getAllSpotsWithDistance } from "@/lib/shared/spots/nearby"
 import { FALLBACK_LOCATION } from "@/lib/shared/defaults"
+import { isActiveUserMax, UNSET_MAX_DISTANCE_KM } from "@/lib/shared/preferenceBounds"
 
 export async function selectSpots(state: SurfAgentStateType): Promise<Partial<SurfAgentStateType>> {
   const user = state.user
@@ -14,8 +15,8 @@ export async function selectSpots(state: SurfAgentStateType): Promise<Partial<Su
   withDistance.sort((a, b) => a.distanceKm - b.distanceKm)
 
   const spotIdsSet = new Set<string>(user.favorites ?? [])
-  const { maxSpots, maxNearby } = agentConfig.selectSpots
-  const maxDist = user.maxDistanceKm ?? maxSpots
+  const { maxNearby } = agentConfig.selectSpots
+  const maxDist = isActiveUserMax(user.maxDistanceKm) ? user.maxDistanceKm : UNSET_MAX_DISTANCE_KM
   for (const s of withDistance) {
     if (s.distanceKm > maxDist) break
     if (spotIdsSet.has(s.id)) continue
