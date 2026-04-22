@@ -1,8 +1,17 @@
 /* eslint-disable no-restricted-globals */
 /**
+ * v2: parse push payload with await + JSON.parse (PushMessageData.json() is Promise-based).
+ * Bump comment when you change this file so you know a refresh picked up a new worker.
+ */
+self.addEventListener("install", () => {
+  self.skipWaiting()
+})
+self.addEventListener("activate", (event) => {
+  event.waitUntil(self.clients.claim())
+})
+
+/**
  * Web Push: server sends JSON { title, body, url } as the message payload.
- * PushMessageData.json() is async in browsers—must await after reading text, or
- * parsing fails and the whole JSON string is shown as the notification body.
  */
 self.addEventListener("push", (event) => {
   event.waitUntil(

@@ -17,6 +17,11 @@ export const agentConfig = {
     wildcardMinScore: 7,
     maxTotalWindows: 30,
     daysAhead: 2,
+    /**
+     * Drop 3h blocks whose *start* (local) is "night" (21:00–05:00). Surf metrics can still
+     * look good after dark, but it is a bad default for push UX. Set AGENT_EXCLUDE_NIGHT_FORECAST_WINDOWS=0 to keep them.
+     */
+    excludeNightWindowStarts: process.env.AGENT_EXCLUDE_NIGHT_FORECAST_WINDOWS !== "0",
   },
   loadUserContext: {
     defaultMaxDistanceKm: 50,

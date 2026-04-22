@@ -72,6 +72,10 @@ export async function computeForecastWindows(
       const userSuitability = envScore
       const adjustedScore = Math.round(userSuitability * confidence * 10) / 10
 
+      if (agentConfig.forecastWindows.excludeNightWindowStarts && timeOfDayLabel === "night") {
+        continue
+      }
+
       const timeDesc = `${formatTimeOfDayForPrompt(timeOfDayLabel)}, in ${hoursUntilStart < 0 ? "past" : `${Math.round(hoursUntilStart)}h`}`
       const distDesc = `${distKm}km away`
       const confidenceNote = confidence < 1 ? ` (forecast confidence ${confidence})` : ""
