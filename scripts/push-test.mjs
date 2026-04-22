@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * Fire POST /api/push/send-test against a deployed (or local) engine.
  *
@@ -59,7 +58,20 @@ console.log(res.status, pretty)
 if (res.ok && typeof body === "object" && body && "activeDeviceTargets" in body) {
   const t = body.activeDeviceTargets
   if (t && t.expo === 0) {
-    console.log("\n(hint) activeDeviceTargets.expo is 0 — no Expo row for this userId; mobile must POST /api/v1/devices/register to this same ENGINE_BASE_URL.\n")
+    console.log(
+      "\n(hint) activeDeviceTargets.expo is 0 — no Expo row for this userId; mobile must POST /api/v1/devices/register to this same ENGINE_BASE_URL.\n",
+    )
+  }
+  const expoFail = body.failures?.expo
+  if (Array.isArray(expoFail) && expoFail.some((f) => /FCM|Firebase/i.test(String(f?.message ?? "")))) {
+    console.log(
+      [
+        "\n(hint) Android push: Expo could not use FCM for your app. Fix in the Expo app project (not this repo):",
+        "  EAS: `eas credentials` / project dashboard → add Android FCM (Firebase) credentials.",
+        "  Docs: https://docs.expo.dev/push-notifications/fcm-credentials/",
+        "",
+      ].join("\n"),
+    )
   }
 }
 if (!res.ok) process.exit(1)

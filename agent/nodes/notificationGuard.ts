@@ -27,7 +27,6 @@ export function notificationGuard(state: SurfAgentStateType): Partial<SurfAgentS
       return { guard }
     }
   }
-  lastNotifyAtByKey.set(dedupeKey, now)
 
   const user = state.user
   if (user?.quietHours) {
@@ -36,8 +35,12 @@ export function notificationGuard(state: SurfAgentStateType): Partial<SurfAgentS
     if (start && end && local >= start && local <= end) {
       guard.allowed = false
       guard.blockedReason = "Quiet hours"
+      return { guard }
     }
   }
+
+  // Record throttle time only if we are allowing the decision past guard (not before quiet-hour reject).
+  lastNotifyAtByKey.set(dedupeKey, now)
 
   return { guard }
 }

@@ -59,5 +59,31 @@ describe("selfReviewAndValidation", () => {
     expect(out.review?.verdict).toBe("reject")
     expect(out.review?.issues?.[0]).toContain("not found")
   })
+
+  it("rejects next_window when windowStart is missing (do not match an arbitrary window)", () => {
+    const out = selfReviewAndValidation(
+      makeState({
+        decision: {
+          notify: true,
+          spotId: "spot-1",
+          when: "next_window",
+        },
+        topCandidates: [{ spotId: "spot-1", summary: "s", envScore: 5, userSuitability: 5 }],
+        forecastWindows: [
+          {
+            spotId: "spot-1",
+            spotName: "Spot 1",
+            start: new Date("2026-03-26T06:00:00.000Z"),
+            end: new Date("2026-03-26T09:00:00.000Z"),
+            envScore: 5,
+            userSuitability: 5,
+            summary: "w",
+          },
+        ],
+      })
+    )
+    expect(out.review?.verdict).toBe("reject")
+    expect(out.review?.issues?.[0]).toContain("windowStart")
+  })
 })
 

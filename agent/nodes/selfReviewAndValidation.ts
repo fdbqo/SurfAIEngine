@@ -29,11 +29,14 @@ export function selfReviewAndValidation(state: SurfAgentStateType): Partial<Surf
   const { minUserSuitability, minConfidence, minConfidenceToNotify } = agentConfig.selfReview
   const isWindowDecision = decision.when === "next_window"
   if (isWindowDecision) {
-    const chosenWindow = forecastWindows.find((w) => {
-      if (w.spotId !== decision.spotId) return false
-      if (!decision.windowStart) return true
-      return w.start.getTime() === decision.windowStart.getTime()
-    })
+    if (!decision.windowStart) {
+      review.verdict = "reject"
+      review.issues = ["next_window decision missing windowStart"]
+      return { review }
+    }
+    const chosenWindow = forecastWindows.find(
+      (w) => w.spotId === decision.spotId && w.start.getTime() === decision.windowStart!.getTime(),
+    )
     if (!chosenWindow) {
       review.verdict = "reject"
       review.issues = ["Chosen forecast window not found in forecastWindows"]

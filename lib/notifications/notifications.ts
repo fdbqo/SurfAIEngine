@@ -629,10 +629,12 @@ export async function runAgentAndMaybeNotify(input: { userId: string; mode: "LIV
 
   const dedupeKey = buildDedupeKey({ userId: input.userId, mode: input.mode, spotId: decision?.spotId })
   // Only dedupe against events that actually delivered at least one push.
+  // Only rows that actually sent at least one device count; do not match legacy/missing sentCount
+  // or dedupe can stay "stuck" for a 30m bucket.
   const already = await NotificationEventModel.findOne({
     userId: input.userId,
     dedupeKey,
-    $or: [{ sentCount: { $gt: 0 } }, { sentCount: { $exists: false } }],
+    sentCount: { $gt: 0 },
   }).lean()
   if (already) {
     const next = computeNextRunAtFromOutcome({ notify: false })

@@ -29,6 +29,18 @@ function clamp01(n: number): number {
   return Math.max(0, Math.min(1, n))
 }
 
+/** User-facing lead time; avoids "tonight" when the window is actually tomorrow+ */
+function formatWindowLeadPhrase(hoursUntilStart: number | undefined): string {
+  if (hoursUntilStart == null || !Number.isFinite(hoursUntilStart)) {
+    return "in the next day or so"
+  }
+  if (hoursUntilStart < 1) return "very soon (within about an hour)"
+  if (hoursUntilStart < 12) return `in about ${Math.round(hoursUntilStart)} hours`
+  if (hoursUntilStart < 30) return "tomorrow or later that day"
+  if (hoursUntilStart < 72) return `in about ${Math.round(hoursUntilStart / 24)} days`
+  return "over the next few days"
+}
+
 function computeReasoningNeed(state: SurfAgentStateType, args: {
   hasWindows: boolean
   memoryConflict: boolean
@@ -277,6 +289,7 @@ Decision rules (FORECAST_PLANNER — realism first):
 - If nothing is worth notifying, set notify=false, set spotId to null, and explain in rationale; set whyNotOthers as short bullets.
 - In rationale: when you chose one time over another (e.g. "now" vs a future window, or one window over others), briefly explain why (e.g. "Afternoon window has better conditions and enough lead time; 6am window is too far and too early."). Use whyNotOthers for short bullets on why you did not pick other options.
 - When notify=true: you MUST provide a short non-empty title and a clear non-empty message.
+  - The title and message MUST refer to the SAME break as spotId (find the name in Top candidates for that id). Do not mix up two different breaks.
   - The message MUST mention the spot name (from the summaries) and whether it's for now vs a future window.
   - The message MUST be user-facing and simple: 1–2 short sentences.
   - The message SHOULD include timing (preferred): a time-of-day label from the summaries, a specific window time (e.g. "16:00–18:00"), or relative timing (e.g. "in ~3h"), especially for when="window".
@@ -323,6 +336,12 @@ Return only structured fields. For dates, use ISO strings for windowStart/window
       const chosen = exact ?? windowsForSpot.sort((a, b) => b.userSuitability - a.userSuitability)[0]
       decision.windowStart = chosen.start
       decision.windowEnd = chosen.end
+      // LLM copy can drift (wrong beach name, tongiht vs next-day window etc) after we snap
+      // to a computed window - regenerate user-facing title/message from the resolved window.
+      const spotName = chosen.spotName?.trim() || "this spot"
+      const tod = chosen.timeOfDayLabel?.replace(/_/g, " ") ?? "that window"
+      decision.title = `Surf: ${spotName}`
+      decision.message = `Good conditions are expected at ${spotName} ${formatWindowLeadPhrase(chosen.hoursUntilStart)} (${tod}). Plan around that window.`
     }
   }
 
@@ -333,6 +352,7 @@ Return only structured fields. For dates, use ISO strings for windowStart/window
     decision.windowStart = undefined
     decision.windowEnd = undefined
     decision.title = undefined
+    // keep message: notify=false paths often set a short user-facing explanation
   }
 
   // If the LLM returns empty strings, generate user-facing copy from deterministic context.
