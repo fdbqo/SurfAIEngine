@@ -1,7 +1,7 @@
 /* eslint-disable no-restricted-globals */
 /**
- * v2: parse push payload with await + JSON.parse (PushMessageData.json() is Promise-based).
- * Bump comment when you change this file so you know a refresh picked up a new worker.
+ * Service worker for web push. Bump SW_REGISTER_QUERY in PushDebugPanel when you change logic
+ * so browsers fetch a new script (otherwise an old broken parser can stick for days).
  */
 self.addEventListener("install", () => {
   self.skipWaiting()
@@ -11,31 +11,53 @@ self.addEventListener("activate", (event) => {
 })
 
 /**
- * Web Push: server sends JSON { title, body, url } as the message payload.
+ * Server sends one JSON object: { title, body, url } (see sendWebPushToUser).
+ * Handles BOM, trim, and accidental double-encoding.
  */
+function parsePushPayload(text) {
+  const raw = String(text).replace(/^\uFEFF/, "").trim()
+  if (!raw) return null
+  try {
+    let v = JSON.parse(raw)
+    if (typeof v === "string") {
+      v = JSON.parse(v)
+    }
+    if (!v || typeof v !== "object" || Array.isArray(v)) return null
+    return v
+  } catch {
+    return null
+  }
+}
+
 self.addEventListener("push", (event) => {
   event.waitUntil(
     (async () => {
-      let payload = {}
+      let title = "Surf AI Engine"
+      let body = "Open for details."
+      let url = "/"
+
       try {
         if (event.data) {
           const text = await event.data.text()
-          if (text) {
-            try {
-              payload = JSON.parse(text)
-            } catch {
-              payload = { title: "Surf AI Engine", body: text, url: "/" }
+          const payload = parsePushPayload(text)
+          if (payload) {
+            if (typeof payload.title === "string" && payload.title.trim()) {
+              title = payload.title.trim()
             }
+            if (typeof payload.body === "string" && payload.body.trim()) {
+              body = payload.body.trim()
+            }
+            if (typeof payload.url === "string" && payload.url.trim()) {
+              url = payload.url.trim()
+            }
+          } else if (text && text.length > 0) {
+            // Do not show raw JSON (common when an old worker failed to parse)
+            body = "New surf update — open the app for details."
           }
         }
       } catch {
-        payload = {}
+        body = "New surf update — open the app."
       }
-
-      const title =
-        typeof payload.title === "string" && payload.title.trim() ? payload.title : "Surf AI Engine"
-      const body = typeof payload.body === "string" && payload.body.trim() ? payload.body : "Open for details."
-      const url = typeof payload.url === "string" && payload.url.trim() ? payload.url : "/"
 
       await self.registration.showNotification(title, {
         body,

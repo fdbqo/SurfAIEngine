@@ -50,7 +50,8 @@ export function PushDebugPanel(props: { userId: string; mode: "LIVE_NOTIFY" | "F
   }, [refreshSubscription])
 
   const ensureSw = useCallback(async () => {
-    const reg = await navigator.serviceWorker.register("/sw.js", { scope: "/" })
+    // Bump v= when public/sw.js changes so dev browsers don’t keep a stale script cache.
+    const reg = await navigator.serviceWorker.register("/sw.js?v=5", { scope: "/" })
     await navigator.serviceWorker.ready
     return reg
   }, [])
