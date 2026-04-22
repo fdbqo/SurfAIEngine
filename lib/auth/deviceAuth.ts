@@ -32,18 +32,40 @@ function bearerFromRequest(req: Request): string | null {
 export async function requireDeviceAuth(req: Request, deviceId: string) {
   await connectDB()
   const token = bearerFromRequest(req)
-  if (!token) throw new Error("Missing device auth token")
+  const debug = process.env.DEVICE_AUTH_DEBUG === "true" || process.env.DEVICE_AUTH_DEBUG === "1"
+  if (!token) {
+    if (debug) console.info("[deviceAuth] missing token", { deviceId })
+    throw new Error("Missing device auth token")
+  }
   const tokenHash = hashDeviceToken(token)
 
   // deviceAuthHash is select:false on the schema; must explicitly request it.
   const profile = await DeviceProfileModel.findOne({ deviceId }).select("+deviceAuthHash").lean()
   const expectedHash = (profile as any)?.deviceAuthHash
   if (typeof expectedHash !== "string" || expectedHash.length < 10) {
+    if (debug) {
+      console.info("[deviceAuth] not initialized", {
+        deviceId,
+        hasProfile: !!profile,
+        userId: (profile as any)?.userId,
+        expectedHashType: typeof expectedHash,
+      })
+    }
     throw new Error("Device auth not initialized; re-register device")
   }
-  if (tokenHash !== expectedHash) throw new Error("Invalid device auth token")
+  if (tokenHash !== expectedHash) {
+    if (debug) {
+      console.info("[deviceAuth] token mismatch", {
+        deviceId,
+        userId: (profile as any)?.userId,
+        tokenHashPrefix: tokenHash.slice(0, 8),
+        expectedHashPrefix: expectedHash.slice(0, 8),
+      })
+    }
+    throw new Error("Invalid device auth token")
+  }
 
-  if (process.env.DEVICE_AUTH_DEBUG === "true" || process.env.DEVICE_AUTH_DEBUG === "1") {
+  if (debug) {
     console.info("[deviceAuth] ok", {
       deviceId,
       userId: (profile as any)?.userId,
