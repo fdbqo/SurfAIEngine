@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
 import { z } from "zod"
 import { getOrInitSchedule, registerDeviceTarget } from "@/lib/notifications/notifications"
-import { ensureDeviceAuth, upsertDeviceProfile } from "@/lib/db/services/deviceProfileService"
+import { ensureDeviceAuth, getDeviceProfileByDeviceId, upsertDeviceProfile } from "@/lib/db/services/deviceProfileService"
 
 export const runtime = "nodejs"
 
@@ -63,9 +63,18 @@ export async function POST(req: Request) {
     const b = parsed.data
     const deviceId = b.deviceId
 
+    // One canonical userId per device: if a profile already exists, always use its userId
+    // for targets + schedule (ignores a mismatched userId in the body, e.g. client sent deviceId as userId once).
+    const existing = await getDeviceProfileByDeviceId(deviceId)
+    const effectiveUserId = existing?.userId ?? b.userId
+    if (process.env.DEVICE_AUTH_DEBUG === "1" && existing && b.userId !== effectiveUserId) {
+      // eslint-disable-next-line no-console
+      console.warn("[devices/register] using stored userId (body mismatch)", { deviceId, bodyUserId: b.userId, effectiveUserId })
+    }
+
     if (b.channel === "webpush") {
       await registerDeviceTarget({
-        userId: b.userId,
+        userId: effectiveUserId,
         channel: "webpush",
         deviceId,
         platform: "web",
@@ -73,7 +82,7 @@ export async function POST(req: Request) {
       })
     } else {
       await registerDeviceTarget({
-        userId: b.userId,
+        userId: effectiveUserId,
         channel: "expo",
         deviceId,
         platform: b.platform,
@@ -84,9 +93,9 @@ export async function POST(req: Request) {
     const prefs =
       b.preferences && typeof b.preferences === "object" ? (b.preferences as Record<string, unknown>) : {}
 
-    await upsertDeviceProfile({
+    const profile = await upsertDeviceProfile({
       deviceId,
-      userId: b.userId,
+      userId: effectiveUserId,
       onboardingCompleted: b.onboardingCompleted,
       units: b.units,
       skill: b.skill,
@@ -98,8 +107,8 @@ export async function POST(req: Request) {
       usualRegions: b.usualRegions,
     })
 
-    // Ensure a per-user schedule row exists (otherwise it only appeared after first cron pass).
-    await getOrInitSchedule(b.userId)
+    // One schedule document per userId; fan-out to devices is via devicetargets for that userId.
+    await getOrInitSchedule(profile.userId)
 
     const auth = await ensureDeviceAuth(deviceId)
     return NextResponse.json({ ok: true, ...(auth.minted ? { deviceToken: auth.deviceToken } : {}) })

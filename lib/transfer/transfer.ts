@@ -3,7 +3,7 @@ import connectDB from "@/lib/db/connect"
 import { TransferCodeModel } from "@/lib/db/models/TransferCode"
 import { DeviceProfileModel } from "@/lib/db/models/DeviceProfile"
 import { getDeviceProfileByDeviceId, getDeviceProfileByUserId } from "@/lib/db/services/deviceProfileService"
-import { getOrInitSchedule } from "@/lib/notifications/notifications"
+import { deleteNotificationScheduleForUser, getOrInitSchedule } from "@/lib/notifications/notifications"
 import mongoose from "mongoose"
 import { toPublicDeviceProfile, type PublicDeviceProfile } from "@/lib/transfer/publicDeviceProfile"
 
@@ -114,6 +114,10 @@ export async function redeemTransferCode(args: {
     })
 
     if (!canonicalUserId) throw new Error("Transfer redeem failed")
+
+    if (args.targetUserId && args.targetUserId !== canonicalUserId) {
+      await deleteNotificationScheduleForUser(args.targetUserId)
+    }
     const p = (await getDeviceProfileByDeviceId(args.targetDeviceId)) as any
     if (!p) throw new Error("Transfer redeem failed: target profile not found after update")
     const profile: PublicDeviceProfile = toPublicDeviceProfile(p)

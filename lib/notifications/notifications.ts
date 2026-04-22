@@ -352,6 +352,13 @@ export async function getOrInitSchedule(userId: string) {
   return await NotificationScheduleModel.findOne({ userId }).lean()
 }
 
+/** Remove schedule row for a userId (e.g. after transfer abandons a stale id). */
+export async function deleteNotificationScheduleForUser(userId: string) {
+  await connectDB()
+  const { NotificationScheduleModel } = getModels()
+  await NotificationScheduleModel.deleteOne({ userId })
+}
+
 export async function setNextRunAt(userId: string, nextRunAt: Date, lastRunAt?: Date) {
   await connectDB()
   const { NotificationScheduleModel } = getModels()
