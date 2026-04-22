@@ -2,9 +2,10 @@ import crypto from "crypto"
 import connectDB from "@/lib/db/connect"
 import { TransferCodeModel } from "@/lib/db/models/TransferCode"
 import { DeviceProfileModel } from "@/lib/db/models/DeviceProfile"
-import { getDeviceProfileByUserId } from "@/lib/db/services/deviceProfileService"
+import { getDeviceProfileByDeviceId, getDeviceProfileByUserId } from "@/lib/db/services/deviceProfileService"
 import { getOrInitSchedule } from "@/lib/notifications/notifications"
 import mongoose from "mongoose"
+import { toPublicDeviceProfile, type PublicDeviceProfile } from "@/lib/transfer/publicDeviceProfile"
 
 function requireSecret(): string {
   const s = process.env.TRANSFER_CODE_SECRET?.trim() || process.env.DEVICE_AUTH_SECRET?.trim()
@@ -84,19 +85,23 @@ export async function redeemTransferCode(args: {
             usualLocation: sourceProfile.usualLocation,
             homeRegion: sourceProfile.homeRegion,
             usualRegions: sourceProfile.usualRegions,
+            // keep location continuity when transferring account setup
+            lastLocation: (sourceProfile as any).lastLocation,
           },
         },
         { upsert: true, session },
       )
 
-      // If the target previously registered push targets under a different userId, migrate them.
+      // Re-key this device's push targets to the canonical userId, even if the client
+      // didn't pass currentUserId (prevents "transfer succeeded in app" drift in DB).
+      await mongoose.connection.collection("devicetargets").updateMany(
+        { deviceId: args.targetDeviceId, userId: { $ne: doc.sourceUserId } },
+        { $set: { userId: doc.sourceUserId } },
+        { session },
+      )
+
+      // Best-effort legacy webpush model migration: only when client tells us the prior userId.
       if (args.targetUserId && args.targetUserId !== doc.sourceUserId) {
-        // Use raw collections so we don't rely on model registration order.
-        await mongoose.connection.collection("devicetargets").updateMany(
-          { deviceId: args.targetDeviceId, userId: args.targetUserId },
-          { $set: { userId: doc.sourceUserId } },
-          { session },
-        )
         await mongoose.connection.collection("pushsubscriptions").updateMany(
           { userId: args.targetUserId },
           { $set: { userId: doc.sourceUserId } },
@@ -109,7 +114,10 @@ export async function redeemTransferCode(args: {
     })
 
     if (!canonicalUserId) throw new Error("Transfer redeem failed")
-    return { ok: true, userId: canonicalUserId }
+    const p = (await getDeviceProfileByDeviceId(args.targetDeviceId)) as any
+    if (!p) throw new Error("Transfer redeem failed: target profile not found after update")
+    const profile: PublicDeviceProfile = toPublicDeviceProfile(p)
+    return { ok: true, userId: canonicalUserId, profile }
   } finally {
     session.endSession()
   }
