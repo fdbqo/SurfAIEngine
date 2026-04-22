@@ -88,6 +88,14 @@ export async function POST(req: Request) {
         platform: b.platform,
         expoToken: b.expoToken,
       })
+      // eslint-disable-next-line no-console
+      console.info("[devices/register] expo", {
+        userId: effectiveUserId,
+        deviceId,
+        bodyUserId: b.userId,
+        userIdOverridden: b.userId !== effectiveUserId,
+        platform: b.platform,
+      })
     }
 
     const prefs =

@@ -380,6 +380,21 @@ function buildDedupeKey(args: { userId: string; mode: string; spotId?: string; b
   return [args.userId, args.mode, args.spotId ?? "none", String(bucket)].join("|")
 }
 
+function expoTokenHint(token: string | undefined): string {
+  if (!token) return "(none)"
+  if (token.length < 20) return "[short token]"
+  return `${token.slice(0, 18)}…`
+}
+
+function webpushEndpointHost(endpoint: string | undefined): string | undefined {
+  if (!endpoint) return undefined
+  try {
+    return new URL(endpoint).host
+  } catch {
+    return undefined
+  }
+}
+
 export async function sendWebPushToUser(userId: string, payload: { title: string; body: string; url: string }) {
   // Prefer new device-target storage; fall back to legacy PushSubscription model.
   const targets = await listActiveDeviceTargetsForUser(userId)
@@ -408,6 +423,13 @@ export async function sendWebPushToUser(userId: string, payload: { title: string
         const anyErr = e as { statusCode?: number; message?: string }
         const statusCode = typeof anyErr?.statusCode === "number" ? anyErr.statusCode : undefined
         const message = typeof anyErr?.message === "string" ? anyErr.message : "Send failed"
+        // eslint-disable-next-line no-console
+        console.warn("[sendWebPush] delivery failed", {
+          userId,
+          host: webpushEndpointHost(s.endpoint),
+          statusCode,
+          message,
+        })
         failures.push({ endpoint: s.endpoint, statusCode, message })
         if (statusCode === 404 || statusCode === 410) {
           // mark disabled so we don't keep trying
@@ -444,7 +466,13 @@ export async function sendExpoPushToUser(
 
   const json: any = await res.json().catch(() => null)
   if (!res.ok || !json) {
+    // eslint-disable-next-line no-console
+    console.warn("[sendExpoPush] HTTP error", { userId, status: res.status, hasBody: json != null })
     return { sent: 0, removed: 0, failures: [{ message: `Expo push request failed (${res.status})` }] }
+  }
+  if (Array.isArray(json?.errors) && json.errors.length > 0) {
+    // eslint-disable-next-line no-console
+    console.warn("[sendExpoPush] Expo API errors", { userId, errors: json.errors })
   }
 
   let sent = 0
@@ -459,12 +487,23 @@ export async function sendExpoPushToUser(
       continue
     }
     const msg = ticket?.message ? String(ticket.message) : "Expo push failed"
-    failures.push({ token, message: msg })
     const err = ticket?.details?.error
+    // eslint-disable-next-line no-console
+    console.warn("[sendExpoPush] ticket not ok", {
+      userId,
+      token: expoTokenHint(token),
+      message: msg,
+      error: err,
+    })
+    failures.push({ token, message: msg })
     if (err === "DeviceNotRegistered" && token) {
       await disableDeviceTarget({ channel: "expo", expoToken: token })
       removed += 1
     }
+  }
+  if (process.env.PUSH_LOG_VERBOSE === "1" && expoTargets.length > 0) {
+    // eslint-disable-next-line no-console
+    console.info("[sendExpoPush] summary", { userId, targetCount: expoTargets.length, sent, removed, failureCount: failures.length })
   }
   return { sent, removed, failures }
 }
