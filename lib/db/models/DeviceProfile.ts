@@ -6,6 +6,8 @@ export type DeviceProfilePreferences = Record<string, unknown>
 export interface IDeviceProfile extends Document {
   deviceId: string
   userId: string
+  /** HMAC hash of the per-device auth token (token never stored). */
+  deviceAuthHash?: string
   onboardingCompleted?: boolean
   units?: {
     waveHeight?: string
@@ -34,6 +36,7 @@ const DeviceProfileSchema = new Schema<IDeviceProfile>(
   {
     deviceId: { type: String, required: true, unique: true },
     userId: { type: String, required: true, index: true },
+    deviceAuthHash: { type: String, required: false, default: null, select: false },
     onboardingCompleted: { type: Boolean, required: false },
     units: {
       type: {

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
 import { z } from "zod"
 import { getOrInitSchedule, registerDeviceTarget } from "@/lib/notifications/notifications"
-import { upsertDeviceProfile } from "@/lib/db/services/deviceProfileService"
+import { ensureDeviceAuth, upsertDeviceProfile } from "@/lib/db/services/deviceProfileService"
 
 export const runtime = "nodejs"
 
@@ -26,7 +26,7 @@ const ProfileFieldsSchema = z.object({
 const WebpushSchema = z
   .object({
     userId: z.string().min(1).max(200),
-    deviceId: z.string().min(1).max(200).optional(),
+    deviceId: z.string().min(1).max(200),
     channel: z.literal("webpush"),
     platform: z.literal("web").optional(),
     subscription: z.object({
@@ -43,7 +43,7 @@ const WebpushSchema = z
 const ExpoSchema = z
   .object({
     userId: z.string().min(1).max(200),
-    deviceId: z.string().min(1).max(200).optional(),
+    deviceId: z.string().min(1).max(200),
     channel: z.literal("expo"),
     platform: z.enum(["android", "ios"]).optional(),
     expoToken: z.string().min(10),
@@ -61,7 +61,7 @@ export async function POST(req: Request) {
   }
   try {
     const b = parsed.data
-    const deviceId = b.deviceId ?? b.userId
+    const deviceId = b.deviceId
 
     if (b.channel === "webpush") {
       await registerDeviceTarget({
@@ -101,7 +101,8 @@ export async function POST(req: Request) {
     // Ensure a per-user schedule row exists (otherwise it only appeared after first cron pass).
     await getOrInitSchedule(b.userId)
 
-    return NextResponse.json({ ok: true })
+    const auth = await ensureDeviceAuth(deviceId)
+    return NextResponse.json({ ok: true, ...(auth.minted ? { deviceToken: auth.deviceToken } : {}) })
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "Failed" }, { status: 500 })
   }

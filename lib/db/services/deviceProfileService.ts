@@ -2,6 +2,7 @@ import connectDB from "../connect"
 import { DeviceProfileModel, type IDeviceProfile } from "../models/DeviceProfile"
 import { deviceProfileToUser, coerceLastLocation } from "../profileToUser"
 import type { User } from "@/types/user/User"
+import { hashDeviceToken, mintDeviceToken } from "@/lib/auth/deviceAuth"
 
 export type UpsertDeviceProfileInput = {
   deviceId: string
@@ -107,6 +108,23 @@ export async function patchDeviceProfile(
 export async function getDeviceProfileByDeviceId(deviceId: string): Promise<IDeviceProfile | null> {
   await connectDB()
   return (await DeviceProfileModel.findOne({ deviceId }).lean()) as IDeviceProfile | null
+}
+
+/**
+ * Ensure a device has a per-device auth token (hashed at rest).
+ * Returns the plaintext token only if it was newly minted.
+ */
+export async function ensureDeviceAuth(deviceId: string): Promise<{ minted: boolean; deviceToken?: string }> {
+  await connectDB()
+  // Need the hash field; it is select:false by default.
+  const existing = await DeviceProfileModel.findOne({ deviceId }).select("+deviceAuthHash").lean()
+  const have = existing && typeof (existing as any).deviceAuthHash === "string" && (existing as any).deviceAuthHash.length > 10
+  if (have) return { minted: false }
+
+  const deviceToken = mintDeviceToken()
+  const deviceAuthHash = hashDeviceToken(deviceToken)
+  await DeviceProfileModel.updateOne({ deviceId }, { $set: { deviceAuthHash } })
+  return { minted: true, deviceToken }
 }
 
 export async function getDeviceProfileByUserId(userId: string): Promise<IDeviceProfile | null> {

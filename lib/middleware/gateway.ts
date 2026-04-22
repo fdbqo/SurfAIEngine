@@ -39,6 +39,7 @@ const DEFAULT_INTERNAL_API_KEY_SKIP_PREFIXES = [
   "/api/location/fallback",
   "/api/v1/devices",
   "/api/v1/device-profiles",
+  "/api/v1/transfer",
 ] as const
 
 function internalApiKeySkipPrefixes(): string[] {

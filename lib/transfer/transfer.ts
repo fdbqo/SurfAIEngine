@@ -7,12 +7,12 @@ import { getOrInitSchedule } from "@/lib/notifications/notifications"
 import mongoose from "mongoose"
 
 function requireSecret(): string {
-  // Best-effort: projects without auth still benefit from hashing-at-rest.
-  return (
-    process.env.TRANSFER_CODE_SECRET?.trim() ||
-    process.env.ENGINE_API_KEY?.trim() ||
-    "dev-transfer-secret"
-  )
+  const s = process.env.TRANSFER_CODE_SECRET?.trim() || process.env.DEVICE_AUTH_SECRET?.trim()
+  if (process.env.NODE_ENV === "production" && !s) {
+    throw new Error("TRANSFER_CODE_SECRET must be set in production")
+  }
+  // Best-effort in dev.
+  return s || "dev-transfer-secret"
 }
 
 function hashCode(code: string): string {

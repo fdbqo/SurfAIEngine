@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server"
 import { z } from "zod"
 import { redeemTransferCode } from "@/lib/transfer/transfer"
+import { requireDeviceAuth } from "@/lib/auth/deviceAuth"
+import { getClientIp, rateLimit } from "@/lib/auth/rateLimit"
 
 export const runtime = "nodejs"
 
@@ -13,6 +15,11 @@ const BodySchema = z.object({
 })
 
 export async function POST(req: Request) {
+  const ip = getClientIp(req)
+  const rl = rateLimit({ key: `transfer_redeem:${ip}`, limit: 20, windowMs: 60_000 })
+  if (!rl.ok) {
+    return NextResponse.json({ error: "Rate limited" }, { status: 429, headers: { "Retry-After": String(Math.ceil(rl.retryAfterMs / 1000)) } })
+  }
   const raw = await req.json().catch(() => null)
   const parsed = BodySchema.safeParse(raw)
   if (!parsed.success) {
@@ -20,6 +27,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: msg }, { status: 400 })
   }
   try {
+    await requireDeviceAuth(req, parsed.data.deviceId)
     const out = await redeemTransferCode({
       code: parsed.data.code,
       targetDeviceId: parsed.data.deviceId,
@@ -27,7 +35,9 @@ export async function POST(req: Request) {
     })
     return NextResponse.json(out)
   } catch (e) {
-    return NextResponse.json({ error: e instanceof Error ? e.message : "Failed" }, { status: 500 })
+    const msg = e instanceof Error ? e.message : "Failed"
+    const status = /unauthorized|missing device auth|invalid device auth|not initialized/i.test(msg) ? 401 : 500
+    return NextResponse.json({ error: msg }, { status })
   }
 }
 

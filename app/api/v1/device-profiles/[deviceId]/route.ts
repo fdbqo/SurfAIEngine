@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { z } from "zod"
 import { patchDeviceProfile } from "@/lib/db/services/deviceProfileService"
+import { requireDeviceAuth } from "@/lib/auth/deviceAuth"
 
 export const runtime = "nodejs"
 
@@ -26,19 +27,24 @@ const BodySchema = z
 
 function engineKeyOk(req: Request): boolean {
   const expected = process.env.ENGINE_API_KEY?.trim()
-  if (!expected) return true
+  if (!expected) return false
   return req.headers.get("x-engine-key") === expected
 }
 
 type RouteContext = { params: Promise<{ deviceId: string }> }
 
 export async function PATCH(req: Request, context: RouteContext) {
-  if (!engineKeyOk(req)) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-  }
-
   const { deviceId: encoded } = await context.params
   const deviceId = decodeURIComponent(encoded)
+
+  // Auth: allow internal engine key OR per-device token.
+  if (!engineKeyOk(req)) {
+    try {
+      await requireDeviceAuth(req, deviceId)
+    } catch (e) {
+      return NextResponse.json({ error: e instanceof Error ? e.message : "Unauthorized" }, { status: 401 })
+    }
+  }
 
   const raw = await req.json().catch(() => null)
   const parsed = BodySchema.safeParse(raw)
