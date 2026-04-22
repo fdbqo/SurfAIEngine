@@ -1,4 +1,4 @@
-import type { SurfAgentStateType, AgentDecision } from "../state"
+import type { SurfAgentStateType, AgentDecision, ForecastWindow } from "../state"
 import { agentConfig } from "../config"
 import { ChatOpenAI } from "@langchain/openai"
 import { z } from "zod"
@@ -29,16 +29,60 @@ function clamp01(n: number): number {
   return Math.max(0, Math.min(1, n))
 }
 
-/** User-facing lead time; avoids "tonight" when the window is actually tomorrow+ */
-function formatWindowLeadPhrase(hoursUntilStart: number | undefined): string {
-  if (hoursUntilStart == null || !Number.isFinite(hoursUntilStart)) {
-    return "in the next day or so"
+/** Shown times are Ireland-local; most Connacht spots align well enough for a surf alert. */
+const PUSH_WINDOW_TZ = "Europe/Dublin"
+
+function formatWindowRangeDisplay(start: Date, end: Date): string {
+  const sDay = start.toLocaleDateString("en-IE", { timeZone: PUSH_WINDOW_TZ, day: "numeric", month: "short" })
+  const eDay = end.toLocaleDateString("en-IE", { timeZone: PUSH_WINDOW_TZ, day: "numeric", month: "short" })
+  const sameDay = sDay === eDay
+  const startStr = start.toLocaleString("en-IE", {
+    timeZone: PUSH_WINDOW_TZ,
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  })
+  const endOpts: Intl.DateTimeFormatOptions = {
+    timeZone: PUSH_WINDOW_TZ,
+    hour: "2-digit",
+    minute: "2-digit",
   }
-  if (hoursUntilStart < 1) return "very soon (within about an hour)"
-  if (hoursUntilStart < 12) return `in about ${Math.round(hoursUntilStart)} hours`
-  if (hoursUntilStart < 30) return "tomorrow or later that day"
-  if (hoursUntilStart < 72) return `in about ${Math.round(hoursUntilStart / 24)} days`
-  return "over the next few days"
+  if (!sameDay) {
+    endOpts.weekday = "short"
+    endOpts.day = "numeric"
+    endOpts.month = "short"
+  }
+  const endStr = end.toLocaleString("en-IE", endOpts)
+  return `${startStr} – ${endStr}`
+}
+
+function formatRelativeLead(hoursUntilStart: number | undefined): string {
+  if (hoursUntilStart == null || !Number.isFinite(hoursUntilStart)) return "upcoming"
+  if (hoursUntilStart < 1) return "starting soon"
+  if (hoursUntilStart < 18) return `in ~${Math.max(1, Math.round(hoursUntilStart))} h`
+  if (hoursUntilStart < 40) return "tomorrow"
+  if (hoursUntilStart < 72) return "in a day or two"
+  return `in ~${Math.round(hoursUntilStart / 24)} days`
+}
+
+function buildSnappedWindowPushCopy(
+  state: SurfAgentStateType,
+  chosen: ForecastWindow,
+): { title: string; message: string } {
+  const name = chosen.spotName?.trim() || "this break"
+  const dist = chosen.distanceKm != null ? `${Math.round(chosen.distanceKm)} km` : null
+  const timeRange = formatWindowRangeDisplay(chosen.start, chosen.end)
+  const lead = formatRelativeLead(chosen.hoursUntilStart)
+  const nowLine = state.interpretedBySpot?.[chosen.spotId]?.nowText
+  const conditions = nowLine ? truncate(nowLine, 100) : null
+
+  const title = dist ? `Surf · ${name} · ${dist}` : `Surf · ${name}`
+
+  const line1 = `${timeRange} · ${lead}.`
+  const message = [line1, conditions].filter(Boolean).join(" ")
+  return { title, message: truncate(message, 220) }
 }
 
 function computeReasoningNeed(state: SurfAgentStateType, args: {
@@ -336,12 +380,10 @@ Return only structured fields. For dates, use ISO strings for windowStart/window
       const chosen = exact ?? windowsForSpot.sort((a, b) => b.userSuitability - a.userSuitability)[0]
       decision.windowStart = chosen.start
       decision.windowEnd = chosen.end
-      // LLM copy can drift (wrong beach name, tongiht vs next-day window etc) after we snap
-      // to a computed window - regenerate user-facing title/message from the resolved window.
-      const spotName = chosen.spotName?.trim() || "this spot"
-      const tod = chosen.timeOfDayLabel?.replace(/_/g, " ") ?? "that window"
-      decision.title = `Surf: ${spotName}`
-      decision.message = `Good conditions are expected at ${spotName} ${formatWindowLeadPhrase(chosen.hoursUntilStart)} (${tod}). Plan around that window.`
+      // LLM copy can drift after we snap to a computed window; build push copy from the window + conditions.
+      const copy = buildSnappedWindowPushCopy(state, chosen)
+      decision.title = copy.title
+      decision.message = copy.message
     }
   }
 
