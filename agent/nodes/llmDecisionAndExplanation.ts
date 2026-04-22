@@ -12,6 +12,7 @@ import {
   applyForecastPlannerNoNowOverride,
   isForecastBlockSessionNow,
 } from "../utils/forecastNoNowSession"
+import { isPlausibleNowForForecast } from "../utils/plausibleNowSession"
 
 function truncate(s: string, max: number): string {
   if (s.length <= max) return s
@@ -147,7 +148,8 @@ export async function llmDecisionAndExplanation(
     top1.userSuitability >= agentConfig.reasoning.strongCandidateMinSuitability &&
     lead >= agentConfig.reasoning.strongCandidateMinLead &&
     reasoningNeed < agentConfig.reasoning.budget.low &&
-    !(mode === "FORECAST_PLANNER" && blockNowForForecast)
+    !(mode === "FORECAST_PLANNER" && blockNowForForecast) &&
+    (mode !== "FORECAST_PLANNER" || isPlausibleNowForForecast(state, top1.spotId))
   ) {
     const nameMatch = candidates.find((c) => c.spotId === top1.spotId)?.summary
     const spotLabel = nameMatch ? nameMatch.split(",")[0]?.replace(/^Spot:\s*/i, "")?.trim() : undefined
@@ -195,7 +197,8 @@ export async function llmDecisionAndExplanation(
       !(mode === "FORECAST_PLANNER" && windows.length > 0) &&
       !(mode === "FORECAST_PLANNER" && blockNowForForecast) &&
       gate.spotId &&
-      validSpotIds.includes(gate.spotId)
+      validSpotIds.includes(gate.spotId) &&
+      (mode !== "FORECAST_PLANNER" || isPlausibleNowForForecast(state, gate.spotId))
     ) {
       const chosen = candidates.find((c) => c.spotId === gate.spotId)
       const spotLabel = chosen?.summary
@@ -225,12 +228,16 @@ export async function llmDecisionAndExplanation(
   const structured = llm.withStructuredOutput(DecisionSchema)
 
   const maxChars = agentConfig.prompt.summaryMaxChars
+  const windowSpotIds = [...new Set(windows.map((w) => w.spotId))]
   const windowsSection =
     mode === "FORECAST_PLANNER" && windows.length
       ? `
 
-Upcoming windows (each line includes distance, time-of-day, lead time; optional "forecast confidence" < 1 means further out and less certain—prefer over 'now' when clearly better and realistic):
-${windows.map((w) => `- ${truncate(w.summary, maxChars)}`).join("\n")}`
+Upcoming windows (each line includes distance, time-of-day, lead time; optional "forecast confidence" < 1 means further out and less certain—prefer these over "now" when they are the better, realistic plan):
+${windows.map((w) => `- ${truncate(w.summary, maxChars)}`).join("\n")}
+
+SpotIds that have at least one upcoming window in the data above (use ONLY these for when="window"):
+${windowSpotIds.join(", ")}`
       : ""
 
   const lastNotifs = state.lastNotifications ?? []
@@ -261,10 +268,12 @@ FORECAST_PLANNER — local time and "now":
 - If any candidate line says the time of day is "night" (roughly 21:00–05:00 local at the break) or "evening" in a way that is too late for a spontaneous session, you MUST NOT set when="now". Pick the best future window from the list (when="window") or set notify=false. Never ask the user to go surfing immediately in the last hours of the day; suggest a morning or daytime window the next day instead.
 - When in doubt in FORECAST mode after dark, prefer a window starting tomorrow morning or midday over "now".
 
-Decision rules:
-- If a future window in the list is clearly better for this user than 'now' and realistic given distance and timing, set notify=true, when="window", spotId to that window's spotId, and windowStart/windowEnd to that window's interval.
+Decision rules (FORECAST_PLANNER — realism first):
+- Prefer notify=true with when="window" and spotId from the "SpotIds that have at least one upcoming window" list, using the best-matching future window. That is the default, trustworthy recommendation.
+- Only use when="now" for a top candidate that is a short drive away and the time of day still allows a same-day session (morning through afternoon); do not use "now" for evening or night, or for far-away spots—use a future window or notify=false.
+- If when="window", spotId MUST be one of the window spotIds listed above (not only the generic valid list). windowStart/windowEnd should match an interval you infer from the window lines.
 - For FORECAST_PLANNER, only set when="now" if local time of day is plausibly still surfable the same day (e.g. morning/afternoon) and a same-day session is realistic; if summaries say "night", use a window, not "now".
-- Otherwise, if current conditions are good enough, set notify=true, when="now", and spotId to the best current candidate.
+- Otherwise, if current conditions are good enough and a spontaneous session is still realistic, set notify=true, when="now", and spotId to the best current candidate.
 - If nothing is worth notifying, set notify=false, set spotId to null, and explain in rationale; set whyNotOthers as short bullets.
 - In rationale: when you chose one time over another (e.g. "now" vs a future window, or one window over others), briefly explain why (e.g. "Afternoon window has better conditions and enough lead time; 6am window is too far and too early."). Use whyNotOthers for short bullets on why you did not pick other options.
 - When notify=true: you MUST provide a short non-empty title and a clear non-empty message.
@@ -302,7 +311,11 @@ Return only structured fields. For dates, use ISO strings for windowStart/window
       decision.windowStart = undefined
       decision.windowEnd = undefined
       decision.title = undefined
-      decision.message = "No valid forecast window available for the chosen spot."
+      decision.message =
+        "We could not match that choice to a forecast window in our data, so no notification is sent."
+      decision.rationale =
+        "The model picked a window timing that is not in the computed forecast list for that spot, or the spot has no window rows. Prefer when=window only for spotIds listed under upcoming windows."
+      decision.whyNotOthers = undefined
     } else {
       const exact =
         decision.windowStart &&

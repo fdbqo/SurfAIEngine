@@ -71,6 +71,14 @@ export const agentConfig = {
     /** Also treat 18:00–21:00 local as "no go now" in forecast mode. */
     alsoBlockEvening: false,
   },
+  /**
+   * FORECAST_PLANNER: only recommend when="now" if close enough and local time is still
+   * a realistic time to get in the water (prefers morning/midday/afternoon over evening).
+   */
+  plausibleNow: {
+    maxDistanceKm: 45,
+    allowedTimeOfDay: ["early_morning", "morning", "midday", "afternoon"] as const,
+  },
   /** Future discount: no decrease for today/tomorrow (<=48h); then declining. */
   notificationTiming: {
     hoursNoDecrease: 48,

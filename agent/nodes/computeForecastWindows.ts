@@ -15,6 +15,7 @@ import { FALLBACK_LOCATION } from "@/lib/shared/defaults"
 
 const { maxWindowsPerSpot, topSpots, wildcardMinScore, maxTotalWindows, daysAhead } =
   agentConfig.forecastWindows
+const { topN: topScoredToEnsure } = agentConfig.candidates
 
 // Build multi-window forecast planning only for FORECAST_PLANNER mode.
 // Up to N windows per spot, top spots by best window; wildcards for other spots with 1 strong window; cap total.
@@ -126,9 +127,29 @@ export async function computeForecastWindows(
     }
   }
 
-  const topWindows = [...main, ...wildcards]
-    .map(({ adjustedScore, ...w }) => w)
-    .slice(0, maxTotalWindows)
+  const stripAdjusted = (row: (typeof windows)[number]) => {
+    const { adjustedScore: _a, ...w } = row
+    return w
+  }
+
+  let topWindows = [...main, ...wildcards].map(({ adjustedScore, ...w }) => w).slice(0, maxTotalWindows)
+
+  // Ensure every top "now" scored spot has at least one forecast row so the LLM can pick
+  // when="window" for the same breaks it sees in Top candidates (UX: no orphan snap vetoes).
+  const seenSpot = new Set(topWindows.map((w) => w.spotId))
+  const scoredSorted = [...(state.scored ?? [])].sort((a, b) => b.userSuitability - a.userSuitability)
+  const ensured: ReturnType<typeof stripAdjusted>[] = []
+  for (const s of scoredSorted.slice(0, topScoredToEnsure)) {
+    if (seenSpot.has(s.spotId)) continue
+    const list = bySpot.get(s.spotId)
+    if (!list?.length) continue
+    const w = stripAdjusted(list[0])
+    ensured.push(w)
+    seenSpot.add(s.spotId)
+  }
+  if (ensured.length > 0) {
+    topWindows = [...ensured, ...topWindows].slice(0, maxTotalWindows + ensured.length)
+  }
 
   return { forecastWindows: topWindows }
 }
