@@ -290,6 +290,37 @@ Return only structured fields. For dates, use ISO strings for windowStart/window
     confidence: raw.confidence ?? undefined,
   }
 
+  // if the LLM chose a forecast window snap it to an actual computed window entry.
+  // prevents the model from inventing timestamps that fail self-review.
+  if (decision.notify && decision.when === "next_window") {
+    const windowsForSpot = (state.forecastWindows ?? []).filter((w) => w.spotId === decision.spotId)
+    if (windowsForSpot.length === 0) {
+      decision.notify = false
+      decision.spotId = undefined
+      decision.when = undefined
+      decision.windowStart = undefined
+      decision.windowEnd = undefined
+      decision.title = undefined
+      decision.message = "No valid forecast window available for the chosen spot."
+    } else {
+      const exact =
+        decision.windowStart &&
+        windowsForSpot.find((w) => w.start.getTime() === decision.windowStart!.getTime())
+      const chosen = exact ?? windowsForSpot.sort((a, b) => b.userSuitability - a.userSuitability)[0]
+      decision.windowStart = chosen.start
+      decision.windowEnd = chosen.end
+    }
+  }
+
+  // keep notify=false decisions clean
+  if (!decision.notify) {
+    decision.spotId = undefined
+    decision.when = undefined
+    decision.windowStart = undefined
+    decision.windowEnd = undefined
+    decision.title = undefined
+  }
+
   // If the LLM returns empty strings, generate user-facing copy from deterministic context.
   const titleBlank = !decision.title || decision.title.trim().length === 0
   const messageBlank = !decision.message || decision.message.trim().length === 0
