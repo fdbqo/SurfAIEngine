@@ -16,18 +16,23 @@ function jsonResponse(request: NextRequest, status: number, body: unknown) {
 function handleApi(request: NextRequest): NextResponse {
   const pathname = request.nextUrl.pathname
 
+  // CORS preflight must succeed (or fail with CORS headers) before auth checks,
+  // otherwise browsers block the real request.
+  if (request.method === "OPTIONS") {
+    if (isBrowserOriginForbidden(request)) {
+      return jsonResponse(request, 403, { error: "Origin not allowed" })
+    }
+    const headers = new Headers()
+    applyCorsHeaders(request, headers)
+    return new NextResponse(null, { status: 204, headers })
+  }
+
   if (isBrowserOriginForbidden(request)) {
     return jsonResponse(request, 403, { error: "Origin not allowed" })
   }
 
   if (isInternalApiSecretInvalid(request, pathname)) {
     return jsonResponse(request, 401, { error: "Unauthorized" })
-  }
-
-  if (request.method === "OPTIONS") {
-    const headers = new Headers()
-    applyCorsHeaders(request, headers)
-    return new NextResponse(null, { status: 204, headers })
   }
 
   const response = NextResponse.next()
