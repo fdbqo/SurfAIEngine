@@ -20,6 +20,27 @@ function deviceIdFrom(req: Request, body: unknown): string | null {
   return null
 }
 
+export async function GET(req: Request) {
+  const deviceId = req.headers.get("x-device-id")?.trim()
+  if (!deviceId) {
+    return NextResponse.json({ error: "x-device-id header is required" }, { status: 400 })
+  }
+
+  let profile: any
+  try {
+    profile = await requireDeviceAuth(req, deviceId)
+  } catch (e) {
+    return NextResponse.json({ error: e instanceof Error ? e.message : "Unauthorized" }, { status: 401 })
+  }
+
+  const userId = typeof profile?.userId === "string" ? profile.userId.trim() : null
+  if (!userId) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  }
+
+  return NextResponse.json({ ok: true, userId, deleted: false })
+}
+
 export async function DELETE(req: Request) {
   const raw = await req.json().catch(() => null)
   const deviceId = deviceIdFrom(req, raw)
@@ -34,7 +55,7 @@ export async function DELETE(req: Request) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "Unauthorized" }, { status: 401 })
   }
 
-  const userId = typeof profile?.userId === "string" ? profile.userId : null
+  const userId = typeof profile?.userId === "string" ? profile.userId.trim() : null
   if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
@@ -42,9 +63,12 @@ export async function DELETE(req: Request) {
   try {
     await connectDB()
 
+    // Some historic rows may have whitespace around userId. Match on trimmed userId to ensure full erasure.
+    const userIdMatch = { $expr: { $eq: [{ $trim: { input: "$userId" } }, userId] } }
+
     const deviceIds = await mongoose.connection
       .collection("deviceprofiles")
-      .find({ userId })
+      .find(userIdMatch)
       .project({ deviceId: 1 })
       .toArray()
       .then((rows) =>
@@ -55,17 +79,17 @@ export async function DELETE(req: Request) {
 
     await Promise.all([
       // Devices + per-device prefs snapshot
-      mongoose.connection.collection("deviceprofiles").deleteMany({ userId }),
+      mongoose.connection.collection("deviceprofiles").deleteMany(userIdMatch),
 
       // Push target storage (webpush endpoints + expo tokens)
-      mongoose.connection.collection("devicetargets").deleteMany({ userId }),
+      mongoose.connection.collection("devicetargets").deleteMany(userIdMatch),
 
       // Legacy push subscription storage
-      mongoose.connection.collection("pushsubscriptions").deleteMany({ userId }),
+      mongoose.connection.collection("pushsubscriptions").deleteMany(userIdMatch),
 
       // Notification history + schedule
-      mongoose.connection.collection("notificationevents").deleteMany({ userId }),
-      mongoose.connection.collection("notificationschedules").deleteMany({ userId }),
+      mongoose.connection.collection("notificationevents").deleteMany(userIdMatch),
+      mongoose.connection.collection("notificationschedules").deleteMany(userIdMatch),
 
       // Transfer codes (issued by this user, or redeemed by any of their devices)
       mongoose.connection.collection("transfercodes").deleteMany({ $or: [{ sourceUserId: userId }, ...(deviceIds.length ? [{ usedByDeviceId: { $in: deviceIds } }] : [])] }),
