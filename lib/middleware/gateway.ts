@@ -21,7 +21,7 @@ export function shouldBlockPublicUi(): boolean {
 
 const DEFAULT_ORIGIN_METHODS = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
 const DEFAULT_ORIGIN_HEADERS =
-  "Content-Type, Authorization, x-internal-api-key, X-Requested-With"
+  "Content-Type, Authorization, x-internal-api-key, X-Requested-With, x-device-id, x-engine-key"
 
 function parseAllowedOrigins(): string[] {
   const raw = process.env.ALLOWED_ORIGINS ?? ""

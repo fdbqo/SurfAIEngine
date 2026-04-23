@@ -7,19 +7,21 @@ import {
   shouldBlockPublicUi,
 } from "@/lib/middleware/gateway"
 
-function jsonResponse(status: number, body: unknown) {
-  return NextResponse.json(body, { status })
+function jsonResponse(request: NextRequest, status: number, body: unknown) {
+  const res = NextResponse.json(body, { status })
+  applyCorsHeaders(request, res.headers)
+  return res
 }
 
 function handleApi(request: NextRequest): NextResponse {
   const pathname = request.nextUrl.pathname
 
   if (isBrowserOriginForbidden(request)) {
-    return jsonResponse(403, { error: "Origin not allowed" })
+    return jsonResponse(request, 403, { error: "Origin not allowed" })
   }
 
   if (isInternalApiSecretInvalid(request, pathname)) {
-    return jsonResponse(401, { error: "Unauthorized" })
+    return jsonResponse(request, 401, { error: "Unauthorized" })
   }
 
   if (request.method === "OPTIONS") {
