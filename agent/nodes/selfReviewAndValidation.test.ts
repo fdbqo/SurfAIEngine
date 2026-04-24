@@ -60,6 +60,34 @@ describe("selfReviewAndValidation", () => {
     expect(out.review?.issues?.[0]).toContain("not found")
   })
 
+  it("revises next_window when selected window envScore is below minimum", () => {
+    const windowStart = new Date("2026-03-26T06:00:00.000Z")
+    const out = selfReviewAndValidation(
+      makeState({
+        decision: {
+          notify: true,
+          spotId: "spot-1",
+          when: "next_window",
+          windowStart,
+        },
+        topCandidates: [{ spotId: "spot-1", summary: "s", envScore: 7, userSuitability: 7 }],
+        forecastWindows: [
+          {
+            spotId: "spot-1",
+            spotName: "Spot 1",
+            start: windowStart,
+            end: new Date(windowStart.getTime() + 3 * 60 * 60 * 1000),
+            envScore: 5,
+            userSuitability: 8,
+            summary: "w",
+          },
+        ],
+      }),
+    )
+    expect(out.review?.verdict).toBe("revise")
+    expect(out.review?.issues?.[0]).toContain("envScore")
+  })
+
   it("rejects next_window when windowStart is missing (do not match an arbitrary window)", () => {
     const out = selfReviewAndValidation(
       makeState({

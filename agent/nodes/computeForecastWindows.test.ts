@@ -77,4 +77,36 @@ describe("computeForecastWindows", () => {
     expect(mockGetForecast3hForSpot).toHaveBeenCalledTimes(2)
     expect(out.forecastWindows?.length).toBeLessThanOrEqual(30)
   })
+
+  it("softens distance penalty for further-out forecast windows", async () => {
+    const nearStart = new Date(Date.now() + 6 * 60 * 60 * 1000)
+    const farStart = new Date(Date.now() + 100 * 60 * 60 * 1000)
+    mockGetForecast3hForSpot.mockResolvedValue([
+      {
+        windowStart: nearStart,
+        localHour: 12,
+        waveHeight: 1,
+        swellHeight: 1,
+        swellPeriod: 10,
+        windSpeed10m: 5,
+        windDirection: 270,
+      },
+      {
+        windowStart: farStart,
+        localHour: 12,
+        waveHeight: 1,
+        swellHeight: 1,
+        swellPeriod: 10,
+        windSpeed10m: 5,
+        windDirection: 270,
+      },
+    ] as unknown as Awaited<ReturnType<typeof getForecast3hForSpot>>)
+    const out = await computeForecastWindows(makeState({ spotIds: ["s1"] }))
+    const windows = out.forecastWindows ?? []
+    const near = windows.find((w) => w.start.getTime() === nearStart.getTime())
+    const far = windows.find((w) => w.start.getTime() === farStart.getTime())
+    expect(near).toBeDefined()
+    expect(far).toBeDefined()
+    expect((far?.userSuitability ?? 0)).toBeGreaterThan(near?.userSuitability ?? 0)
+  })
 })

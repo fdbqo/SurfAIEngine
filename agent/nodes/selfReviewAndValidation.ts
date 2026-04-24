@@ -26,7 +26,7 @@ export function selfReviewAndValidation(state: SurfAgentStateType): Partial<Surf
     return { review }
   }
 
-  const { minUserSuitability, minConfidence, minConfidenceToNotify } = agentConfig.selfReview
+  const { minUserSuitability, minEnvScoreToNotify, minConfidence, minConfidenceToNotify } = agentConfig.selfReview
   const isWindowDecision = decision.when === "next_window"
   if (isWindowDecision) {
     if (!decision.windowStart) {
@@ -49,11 +49,23 @@ export function selfReviewAndValidation(state: SurfAgentStateType): Partial<Surf
       ]
       return { review }
     }
+    if (chosenWindow.envScore < minEnvScoreToNotify) {
+      review.verdict = "revise"
+      review.issues = [
+        `Future-window envScore ${chosenWindow.envScore} below threshold ${minEnvScoreToNotify}`,
+      ]
+      return { review }
+    }
   } else {
     const chosenScore = scored.find((s) => s.spotId === decision.spotId)
     if (chosenScore && chosenScore.userSuitability < minUserSuitability) {
       review.verdict = "revise"
       review.issues = [`User suitability ${chosenScore.userSuitability} below threshold ${minUserSuitability}`]
+      return { review }
+    }
+    if (chosenScore && chosenScore.envScore < minEnvScoreToNotify) {
+      review.verdict = "revise"
+      review.issues = [`Env score ${chosenScore.envScore} below threshold ${minEnvScoreToNotify}`]
       return { review }
     }
   }

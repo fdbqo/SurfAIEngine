@@ -5,7 +5,7 @@
 export const agentConfig = {
   planner: {
     maxSteps: Number(process.env.AGENT_MAX_STEPS) || 6,
-    /** Default region when user has no lastLocation and no homeRegion/usualRegions (e.g. "Connacht"). */
+    /** Default region when user has no lastLocation and no homeRegion/usualRegions (e.g. "connacht"). */
     defaultRegion: "Connacht",
   },
   candidates: {
@@ -18,10 +18,27 @@ export const agentConfig = {
     maxTotalWindows: 30,
     daysAhead: 2,
     /**
+     * UX: default to short horizon (actionable + reliable). If no viable windows are found,
+     * expand the search to this many days ahead to surface the "next opportunity".
+     * Set AGENT_FORECAST_FALLBACK_DAYS_AHEAD=0 to disable.
+     */
+    fallbackDaysAhead: Number(process.env.AGENT_FORECAST_FALLBACK_DAYS_AHEAD) || 5,
+    /**
      * Drop 3h blocks whose *start* (local) is "night" (21:00–05:00). Surf metrics can still
      * look good after dark, but it is a bad default for push UX. Set AGENT_EXCLUDE_NIGHT_FORECAST_WINDOWS=0 to keep them.
      */
     excludeNightWindowStarts: process.env.AGENT_EXCLUDE_NIGHT_FORECAST_WINDOWS !== "0",
+    /**
+     * Soften distance penalty for further-out forecast windows (planning horizon):
+     * - no easing for short-notice windows,
+     * - gradually ease by lead time,
+     * - cap easing so distance still matters.
+     */
+    distanceSoftening: {
+      startHours: Number(process.env.AGENT_FORECAST_DISTANCE_SOFTEN_START_HOURS) || 24,
+      fullHours: Number(process.env.AGENT_FORECAST_DISTANCE_SOFTEN_FULL_HOURS) || 96,
+      maxBlend: Number(process.env.AGENT_FORECAST_DISTANCE_SOFTEN_MAX_BLEND) || 0.35,
+    },
   },
   loadUserContext: {
     defaultMaxDistanceKm: 50,
@@ -34,7 +51,7 @@ export const agentConfig = {
   },
   /** Only call decision LLM when at least one candidate/window meets this. */
   decisionGate: {
-    minScoreToCallLlm: 3,
+    minScoreToCallLlm: 4,
   },
   /** Token-efficient decision shortcuts and trade-off detection. */
   reasoning: {
@@ -53,7 +70,9 @@ export const agentConfig = {
     },
   },
   selfReview: {
-    minUserSuitability: 4,
+    minUserSuitability: 5,
+    /** Reject notify=true when selected option has weak environmental quality. */
+    minEnvScoreToNotify: 6,
     minConfidence: 0.5,
     /** Below this → reject (do not notify). Use confidence from LLM when present. */
     minConfidenceToNotify: 0.4,
