@@ -14,15 +14,15 @@ export const agentConfig = {
     topSpots: 5,
     wildcardMinScore: 7,
     maxTotalWindows: 30,
-    daysAhead: 2,
+    daysAhead: Number(process.env.AGENT_FORECAST_DAYS_AHEAD) || 5,
     /** fallback horizon when short range has no good windows */
-    fallbackDaysAhead: Number(process.env.AGENT_FORECAST_FALLBACK_DAYS_AHEAD) || 5,
+    fallbackDaysAhead: Number(process.env.AGENT_FORECAST_FALLBACK_DAYS_AHEAD) || 9,
     /** skip windows that start at night */
     excludeNightWindowStarts: process.env.AGENT_EXCLUDE_NIGHT_FORECAST_WINDOWS !== "0",
     /** ease distance penalty for far-off windows */
     distanceSoftening: {
       startHours: Number(process.env.AGENT_FORECAST_DISTANCE_SOFTEN_START_HOURS) || 24,
-      fullHours: Number(process.env.AGENT_FORECAST_DISTANCE_SOFTEN_FULL_HOURS) || 96,
+      fullHours: Number(process.env.AGENT_FORECAST_DISTANCE_SOFTEN_FULL_HOURS) || 168,
       maxBlend: Number(process.env.AGENT_FORECAST_DISTANCE_SOFTEN_MAX_BLEND) || 0.35,
     },
   },
@@ -88,8 +88,8 @@ export const agentConfig = {
   },
   /** confidence discount for far future windows */
   notificationTiming: {
-    hoursNoDecrease: 48,
-    minFactor: 0.75,
-    hoursAtMin: 120,
+    hoursNoDecrease: Number(process.env.AGENT_FORECAST_HOURS_NO_DECREASE) || 72,
+    minFactor: Number(process.env.AGENT_FORECAST_MIN_CONFIDENCE_FACTOR) || 0.85,
+    hoursAtMin: Number(process.env.AGENT_FORECAST_HOURS_AT_MIN_CONFIDENCE) || 168,
   },
 } as const

@@ -13,20 +13,20 @@ describe("getFutureDiscountFactor", () => {
     process.env = originalEnv
   })
 
-  it("returns 1 when hoursUntilStart <= hoursNoDecrease (48)", () => {
+  it("returns 1 when hoursUntilStart <= hoursNoDecrease (72)", () => {
     expect(getFutureDiscountFactor(0)).toBe(1)
     expect(getFutureDiscountFactor(24)).toBe(1)
-    expect(getFutureDiscountFactor(48)).toBe(1)
+    expect(getFutureDiscountFactor(72)).toBe(1)
   })
 
-  it("returns minFactor (0.75) when hoursUntilStart >= hoursAtMin (120)", () => {
-    expect(getFutureDiscountFactor(120)).toBe(0.75)
-    expect(getFutureDiscountFactor(168)).toBe(0.75)
+  it("returns minFactor (0.85) when hoursUntilStart >= hoursAtMin (168)", () => {
+    expect(getFutureDiscountFactor(168)).toBe(0.85)
+    expect(getFutureDiscountFactor(200)).toBe(0.85)
   })
 
-  it("returns linear interpolation between 48 and 120", () => {
-    const mid = getFutureDiscountFactor(84) // (48+120)/2
-    expect(mid).toBeGreaterThan(0.75)
+  it("returns linear interpolation between 72 and 168", () => {
+    const mid = getFutureDiscountFactor(120) // (72+168)/2
+    expect(mid).toBeGreaterThan(0.85)
     expect(mid).toBeLessThan(1)
     expect(typeof mid).toBe("number")
     expect(Number.isFinite(mid)).toBe(true)
