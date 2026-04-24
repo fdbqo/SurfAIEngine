@@ -3,7 +3,7 @@ import mongoose, { Schema, Document, model, models } from "mongoose"
 export interface ISpotForecast3h extends Document {
   spotId: string
   blockStart: Date
-  /** Stored but not used for decisions; we score from swell/wave/wind in the agent. */
+  /** stored for reference, not used in decisions */
   blockScore?: number
   localHour?: number // hour (0–23) from blockStart, for time-of-day
   swellHeight: number

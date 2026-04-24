@@ -16,10 +16,7 @@ function asBool(v: unknown): boolean | undefined {
   return typeof v === "boolean" ? v : undefined
 }
 
-/**
- * Maps stored device profile + mixed wizard preferences onto the engine `User` type.
- * Unknown keys in preferences are ignored; known keys match `User.preferences`.
- */
+/** map device profile data into user shape */
 export function deviceProfileToUser(doc: IDeviceProfile | Record<string, unknown>): User {
   const d = doc as IDeviceProfile
   const p = d.preferences && typeof d.preferences === "object" ? (d.preferences as Record<string, unknown>) : {}
@@ -64,6 +61,7 @@ export function deviceProfileToUser(doc: IDeviceProfile | Record<string, unknown
     notificationSettings: {
       enabled: d.notificationSettings?.enabled !== false,
     },
+    units: d.units,
     usualLocation: d.usualLocation,
     lastLocation,
     homeRegion: d.homeRegion,
@@ -73,7 +71,7 @@ export function deviceProfileToUser(doc: IDeviceProfile | Record<string, unknown
   }
 }
 
-/** Coerce a loose lastLocation from client JSON into `UserLocation` if possible. */
+/** parse loose last location input */
 export function coerceLastLocation(
   input: unknown
 ): UserLocation | undefined {

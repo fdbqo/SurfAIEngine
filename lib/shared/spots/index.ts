@@ -21,7 +21,7 @@ export function getSpotById(id: string): Spot | undefined {
   return cache.get(id)
 }
 
-/** Batch lookup by ids; uses same cache as getSpotById. Returns Map for O(1) access by id. */
+/** batch lookup by ids */
 export function getSpotsById(ids: string[]): Map<string, Spot> {
   const cache = buildSpotCache()
   const out = new Map<string, Spot>()

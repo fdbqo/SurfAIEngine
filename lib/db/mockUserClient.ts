@@ -1,6 +1,6 @@
 import type { User } from "@/types/user/User"
 
-/** Example/test users only; regions and coords are sample data for development. */
+/** sample users for dev tests */
 export const mockUser: User = {
   id: "test-user-1",
   skill: "beginner",
@@ -66,7 +66,7 @@ export const mockUserAdvanced: User = {
   updatedAt: new Date("2026-01-19T08:45:00.000Z"),
 }
 
-/** User with usual location only (no current GPS). Distance/near-user logic uses usual location. */
+/** sample user with only home location */
 export const mockUserNoCurrentLocation: User = {
   id: "test-user-no-gps",
   skill: "intermediate",

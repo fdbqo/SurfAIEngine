@@ -14,7 +14,7 @@ function spotIdFilter(spotId: string): Record<string, unknown> {
   return { spotId }
 }
 
-// Live conditions, no future hours
+// live conditions only
 const liveOnlyFilter = () => ({ timestamp: { $lte: new Date() } })
 
 export async function getConditionsForSpot(spotId: string): Promise<SpotConditions | null> {
@@ -145,7 +145,7 @@ export async function getDailyForecastForSpot(
   }))
 }
 
-/** Returns 3h blocks for scoring; blockScore from DB is not used—we score from swell/wave/wind in computeForecastWindows. */
+/** return 3h blocks for scoring */
 export async function getForecast3hForSpot(
   spotId: string,
   days: number = 5

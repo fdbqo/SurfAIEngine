@@ -1,8 +1,5 @@
 /* eslint-disable no-restricted-globals */
-/**
- * Service worker for web push. Bump SW_REGISTER_QUERY in PushDebugPanel when you change logic
- * so browsers fetch a new script (otherwise an old broken parser can stick for days).
- */
+/** web push service worker */
 self.addEventListener("install", () => {
   self.skipWaiting()
 })
@@ -10,10 +7,7 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(self.clients.claim())
 })
 
-/**
- * Server sends one JSON object: { title, body, url } (see sendWebPushToUser).
- * Handles BOM, trim, and accidental double-encoding.
- */
+/** parse push payload object */
 function parsePushPayload(text) {
   const raw = String(text).replace(/^\uFEFF/, "").trim()
   if (!raw) return null
@@ -51,7 +45,7 @@ self.addEventListener("push", (event) => {
               url = payload.url.trim()
             }
           } else if (text && text.length > 0) {
-            // Do not show raw JSON (common when an old worker failed to parse)
+            // avoid showing raw json
             body = "New surf update — open the app for details."
           }
         }

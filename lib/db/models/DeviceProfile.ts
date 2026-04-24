@@ -1,12 +1,12 @@
 import mongoose, { Schema, Document, model, models } from "mongoose"
 
-/** Full wizard payload; stored as-is for forward compatibility. */
+/** raw wizard preferences */
 export type DeviceProfilePreferences = Record<string, unknown>
 
 export interface IDeviceProfile extends Document {
   deviceId: string
   userId: string
-  /** HMAC hash of the per-device auth token (token never stored). */
+  /** hashed device auth token */
   deviceAuthHash?: string
   onboardingCompleted?: boolean
   units?: {
@@ -14,7 +14,7 @@ export interface IDeviceProfile extends Document {
     windSpeed?: string
     distance?: string
   }
-  /** Surf skill for the agent (also may appear inside preferences from some clients). */
+  /** surf skill for the agent */
   skill?: "beginner" | "intermediate" | "advanced"
   preferences: DeviceProfilePreferences
   notificationSettings?: { enabled: boolean }

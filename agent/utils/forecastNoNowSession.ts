@@ -3,7 +3,7 @@ import { agentConfig } from "../config"
 import { getTimeOfDayLabel, type TimeOfDayLabel, formatTimeOfDayForPrompt } from "./notificationContext"
 import type { SpotConditions } from "@/lib/shared/types"
 
-/** Prefer local hour from any loaded hourly (spot-local clock). */
+/** get local hour from loaded data */
 export function getLocalHourFromState(state: SurfAgentStateType): number | null {
   const hourlies = state.hourliesBySpot ?? {}
   for (const c of Object.values(hourlies)) {
@@ -21,10 +21,7 @@ function labelFromTopCandidate(state: SurfAgentStateType): string | null {
   return t ?? null
 }
 
-/**
- * In FORECAST_PLANNER, "now" is a poor recommendation when it is already late (night)
- * or evening — user should get a future window, not a same-minute session.
- */
+/** block now picks when it is too late in forecast mode */
 export function isForecastBlockSessionNow(
   state: SurfAgentStateType,
   _now: Date
@@ -49,10 +46,7 @@ export function isForecastBlockSessionNow(
   return { block: false }
 }
 
-/**
- * Best future window for a forecast notification when "now" is blocked.
- * Prefers the LLM's chosen spot if it has a strong upcoming window, else best overall.
- */
+/** pick best future window when now is blocked */
 export function pickBestFutureWindowForOverride(
   state: SurfAgentStateType,
   preferSpotId: string | undefined,
@@ -80,9 +74,7 @@ export function pickBestFutureWindowForOverride(
   return [...pool].sort(byScore)[0] ?? null
 }
 
-/**
- * Replace when=now with a future window, or turn off notify if none exists.
- */
+/** switch now to future window, or turn notify off */
 export function applyForecastPlannerNoNowOverride(
   state: SurfAgentStateType,
   decision: AgentDecision,

@@ -28,8 +28,7 @@ function getForecastDistanceScore(baseDistanceScore: number, hoursUntilStart: nu
   return baseDistanceScore + (1 - baseDistanceScore) * blend
 }
 
-// Build multi-window forecast planning only for FORECAST_PLANNER mode.
-// Up to N windows per spot, top spots by best window; wildcards for other spots with 1 strong window; cap total.
+// Build FORECAST_PLANNER windows: top-N per spot, plus strong wildcards, capped globally.
 export async function computeForecastWindows(
   state: SurfAgentStateType
 ): Promise<Partial<SurfAgentStateType>> {
@@ -109,6 +108,11 @@ export async function computeForecastWindows(
           hoursUntilStart: Math.round(hoursUntilStart * 10) / 10,
           timeOfDayLabel,
           forecastConfidence: confidence,
+          waveHeight: b.waveHeight,
+          swellHeight: b.swellHeight,
+          swellPeriod: b.swellPeriod,
+          windSpeed10m: b.windSpeed10m,
+          windDirection: b.windDirection,
           adjustedScore,
         })
       }
@@ -163,8 +167,7 @@ export async function computeForecastWindows(
 
   let topWindows = [...main, ...wildcards].map(({ adjustedScore, ...w }) => w).slice(0, maxTotalWindows)
 
-  // Ensure every top "now" scored spot has at least one forecast row so the LLM can pick
-  // when="window" for the same breaks it sees in Top candidates (UX: no orphan snap vetoes).
+  // Ensure top live candidates also have at least one window row to avoid orphan picks.
   const seenSpot = new Set(topWindows.map((w) => w.spotId))
   const scoredSorted = [...(state.scored ?? [])].sort((a, b) => b.userSuitability - a.userSuitability)
   const ensured: ReturnType<typeof stripAdjusted>[] = []

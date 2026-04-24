@@ -1,6 +1,6 @@
 import type { UserLocation } from "./UserLocation"
 
-/** User's usual/home location (saved). Used when current location is unavailable. */
+/** saved home location */
 export type UsualLocation = { lat: number; lon: number }
 
 export type User = {
@@ -10,17 +10,17 @@ export type User = {
 
   preferences: {
     /**
-     * Legacy field we still keep.
+     * legacy field
      */
     riskTolerance: "low" | "medium" | "high"
 
     /**
-     * How picky notifications should be (drives distance decay + notify threshold).
-     * strict = fewer alerts, lenient = more alerts.
+     * notification strictness
+     * strict means fewer alerts
      */
     notifyStrictness?: "strict" | "moderate" | "lenient"
 
-    /** Optional numeric constraints (units match onboarding UI). */
+    /** optional numeric limits */
     minWaveHeightFt?: number | null
     maxWaveHeightFt?: number | null
     maxWindSpeedKnots?: number | null
@@ -29,7 +29,7 @@ export type User = {
     sandAllowed?: boolean
     minSwellPeriodSec?: number | null
 
-    /** Optional user note for the agent/LLM (not a hard rule). */
+    /** optional user note */
     freeText?: string
   }
 
@@ -37,10 +37,17 @@ export type User = {
     enabled: boolean
   }
 
-  /** Usual/home location (saved). Fallback when current location is missing. */
+  /** optional display units */
+  units?: {
+    waveHeight?: string
+    windSpeed?: string
+    distance?: string
+  }
+
+  /** home location fallback */
   usualLocation?: UsualLocation
 
-  /** Current location when available (e.g. from GPS). */
+  /** latest location */
   lastLocation?: UserLocation
 
   homeRegion?: string

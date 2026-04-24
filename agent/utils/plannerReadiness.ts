@@ -6,7 +6,7 @@ export type PlannerReadiness = {
   haveConditions: boolean
 }
 
-/** Single source of truth for planner/graph: whether we have user, spots, and conditions. */
+/** readiness check for user, spots, and conditions */
 export function getPlannerReadiness(state: SurfAgentStateType): PlannerReadiness {
   const haveUser = state.user != null
   const haveSpots =

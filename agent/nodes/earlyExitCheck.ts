@@ -1,13 +1,9 @@
 import type { SurfAgentStateType, AgentDecision } from "../state"
 import { agentConfig } from "../config"
 
-/**
- * After scoring: if no viable spots, set decision and skip LLM + candidates + windows.
- * Saves tokens and gives the agent an explicit "stop early" behaviour.
- */
+/** stop early when scores are too low */
 export function earlyExitCheck(state: SurfAgentStateType): Partial<SurfAgentStateType> {
-  // In forecast planning mode we should not stop early based on "now" scoring,
-  // because the whole point is to look for upcoming windows.
+  // skip early exit in forecast mode
   if (state.mode === "FORECAST_PLANNER") return {}
 
   const scored = state.scored ?? []

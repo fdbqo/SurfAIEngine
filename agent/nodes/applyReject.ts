@@ -1,6 +1,6 @@
 import type { SurfAgentStateType, AgentDecision } from "../state"
 
-/** Force decision to notify=false and set message from review issues when verdict is reject (or we give up on revise). */
+/** force reject decision shape */
 export function applyReject(state: SurfAgentStateType): Partial<SurfAgentStateType> {
   const decision = state.decision
   const issues = state.review?.issues ?? []

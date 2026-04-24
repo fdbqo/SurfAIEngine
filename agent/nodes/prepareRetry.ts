@@ -2,7 +2,7 @@ import type { SurfAgentStateType } from "../state"
 
 import { agentConfig } from "../config"
 
-/** Increment retry count before re-invoking LLM. Used when review verdict is "revise". */
+/** increment retry count before llm retry */
 export function prepareRetry(state: SurfAgentStateType): Partial<SurfAgentStateType> {
   const count = state.llmRetryCount ?? 0
   return { llmRetryCount: count + 1 }

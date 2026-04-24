@@ -110,13 +110,10 @@ export async function getDeviceProfileByDeviceId(deviceId: string): Promise<IDev
   return (await DeviceProfileModel.findOne({ deviceId }).lean()) as IDeviceProfile | null
 }
 
-/**
- * Ensure a device has a per-device auth token (hashed at rest).
- * Returns the plaintext token only if it was newly minted.
- */
+/** ensure device auth token exists */
 export async function ensureDeviceAuth(deviceId: string): Promise<{ minted: boolean; deviceToken?: string }> {
   await connectDB()
-  // Need the hash field; it is select:false by default.
+  // include hash field in query
   const existing = await DeviceProfileModel.findOne({ deviceId }).select("+deviceAuthHash").lean()
   const have = existing && typeof (existing as any).deviceAuthHash === "string" && (existing as any).deviceAuthHash.length > 10
   if (have) return { minted: false }
@@ -132,9 +129,7 @@ export async function getDeviceProfileByUserId(userId: string): Promise<IDeviceP
   return (await DeviceProfileModel.findOne({ userId }).sort({ updatedAt: -1 }).lean()) as IDeviceProfile | null
 }
 
-/**
- * Resolve a User for the agent: prefer deviceId match, then userId match, then most recently updated.
- */
+/** resolve user by device id or user id */
 export async function getUserFromDeviceStore(userIdOrDeviceId: string): Promise<User | null> {
   await connectDB()
   const byDevice = await getDeviceProfileByDeviceId(userIdOrDeviceId)
@@ -144,9 +139,7 @@ export async function getUserFromDeviceStore(userIdOrDeviceId: string): Promise<
   return null
 }
 
-/**
- * Cron: profiles eligible for agent runs (notifications on, onboarding done or unset).
- */
+/** list cron-eligible profiles */
 export async function listDeviceProfilesForCron(): Promise<IDeviceProfile[]> {
   await connectDB()
   const rows = await DeviceProfileModel.find({

@@ -13,6 +13,7 @@ import {
   isForecastBlockSessionNow,
 } from "../utils/forecastNoNowSession"
 import { isPlausibleNowForForecast } from "../utils/plausibleNowSession"
+import type { SpotConditions } from "@/lib/shared/types"
 
 function truncate(s: string, max: number): string {
   if (s.length <= max) return s
@@ -29,7 +30,7 @@ function clamp01(n: number): number {
   return Math.max(0, Math.min(1, n))
 }
 
-/** Shown times are Ireland-local; most Connacht spots align well enough for a surf alert. */
+/** use ireland local time for push windows */
 const PUSH_WINDOW_TZ = "Europe/Dublin"
 
 function formatWindowRangeDisplay(start: Date, end: Date): string {
@@ -67,22 +68,100 @@ function formatRelativeLead(hoursUntilStart: number | undefined): string {
   return `in ~${Math.round(hoursUntilStart / 24)} days`
 }
 
+function toKnots(kmh: number): number {
+  return kmh / 1.852
+}
+
+function toMph(kmh: number): number {
+  return kmh * 0.621371
+}
+
+function toMs(kmh: number): number {
+  return kmh / 3.6
+}
+
+function toFeet(meters: number): number {
+  return meters * 3.28084
+}
+
+function normalizeWindUnit(raw: string | undefined): "kmh" | "kn" | "mph" | "ms" {
+  const v = String(raw ?? "").toLowerCase().trim()
+  if (v.includes("knot") || v === "kn" || v === "kts") return "kn"
+  if (v.includes("mph")) return "mph"
+  if (v === "ms" || v.includes("m/s")) return "ms"
+  return "kmh"
+}
+
+function formatWindSpeed(kmh: number | undefined, unitRaw: string | undefined): string {
+  if (kmh == null || !Number.isFinite(kmh)) return "n/a"
+  const unit = normalizeWindUnit(unitRaw)
+  if (unit === "kn") return `${Math.round(toKnots(kmh))} kn`
+  if (unit === "mph") return `${Math.round(toMph(kmh))} mph`
+  if (unit === "ms") return `${toMs(kmh).toFixed(1)} m/s`
+  return `${Math.round(kmh)} km/h`
+}
+
+function formatWaveHeight(meters: number | undefined, unitRaw: string | undefined): string {
+  if (meters == null || !Number.isFinite(meters)) return "n/a"
+  const unit = String(unitRaw ?? "").toLowerCase().trim()
+  if (unit.includes("ft")) return `${toFeet(meters).toFixed(1)} ft`
+  return `${meters.toFixed(1)} m`
+}
+
+function getSpotName(state: SurfAgentStateType, spotId: string, fallback?: string): string {
+  const fromCandidate = state.topCandidates
+    ?.find((c) => c.spotId === spotId)
+    ?.summary?.split(",")[0]
+    ?.replace(/^Spot:\s*/i, "")
+    ?.trim()
+  return fromCandidate || fallback || "this break"
+}
+
+function buildWindowTechLine(state: SurfAgentStateType, chosen: ForecastWindow): string {
+  const units = state.user?.rawUser?.units
+  return [
+    `waves ${formatWaveHeight(chosen.waveHeight, units?.waveHeight)}`,
+    `swell ${formatWaveHeight(chosen.swellHeight, units?.waveHeight)} @ ${chosen.swellPeriod?.toFixed(1) ?? "n/a"}s`,
+    `wind ${formatWindSpeed(chosen.windSpeed10m, units?.windSpeed)}`,
+  ].join(" · ")
+}
+
+function buildNowTechLine(state: SurfAgentStateType, spotId: string): string {
+  const units = state.user?.rawUser?.units
+  const row = state.hourliesBySpot?.[spotId] as SpotConditions | undefined | null
+  return [
+    `waves ${formatWaveHeight(row?.waveHeight, units?.waveHeight)}`,
+    `swell ${formatWaveHeight(row?.swellHeight, units?.waveHeight)} @ ${row?.swellPeriod?.toFixed(1) ?? "n/a"}s`,
+    `wind ${formatWindSpeed(row?.windSpeed10m ?? row?.windSpeed, units?.windSpeed)}`,
+  ].join(" · ")
+}
+
 function buildSnappedWindowPushCopy(
   state: SurfAgentStateType,
   chosen: ForecastWindow,
 ): { title: string; message: string } {
   const name = chosen.spotName?.trim() || "this break"
-  const dist = chosen.distanceKm != null ? `${Math.round(chosen.distanceKm)} km` : null
   const timeRange = formatWindowRangeDisplay(chosen.start, chosen.end)
   const lead = formatRelativeLead(chosen.hoursUntilStart)
-  const nowLine = state.interpretedBySpot?.[chosen.spotId]?.nowText
-  const conditions = nowLine ? truncate(nowLine, 100) : null
+  const skill = state.user?.skillLevel ?? "surfer"
+  const travel = chosen.distanceKm != null ? `, about ${Math.round(chosen.distanceKm)} km away` : ""
+  const why = `good match for your ${skill} profile (${lead}${travel})`
+  const details = buildWindowTechLine(state, chosen)
+  const title = `Surf ${name} - ${timeRange}`
+  return { title, message: truncate(`${why}\n${details}`, 220) }
+}
 
-  const title = dist ? `Surf · ${name} · ${dist}` : `Surf · ${name}`
-
-  const line1 = `${timeRange} · ${lead}.`
-  const message = [line1, conditions].filter(Boolean).join(" ")
-  return { title, message: truncate(message, 220) }
+function buildNowPushCopy(state: SurfAgentStateType, spotId: string): { title: string; message: string } {
+  const skill = state.user?.skillLevel ?? "surfer"
+  const top = state.topCandidates?.find((c) => c.spotId === spotId)
+  const spotName = getSpotName(state, spotId)
+  const travel = top?.distanceKm != null ? `, about ${Math.round(top.distanceKm)} km away` : ""
+  const why = `good match for your ${skill} profile right now${travel}`
+  const details = buildNowTechLine(state, spotId)
+  return {
+    title: `Surf ${spotName} - now`,
+    message: truncate(`${why}\n${details}`, 220),
+  }
 }
 
 function computeReasoningNeed(state: SurfAgentStateType, args: {
@@ -154,7 +233,7 @@ export async function llmDecisionAndExplanation(
     ? `\n\nPrevious attempt was rejected. Issues: ${state.review.issues.join("; ")}. You MUST use spotId from the valid list below (exact string, e.g. a 24-char hex ID), NOT the spot name. Fix and return a new decision.`
     : ""
 
-  // Gated LLM: only call when at least one candidate/window meets threshold
+  // call llm only when at least one option passes threshold
   const maxSuitability = candidates.reduce(
     (m, c) => (c.userSuitability > m ? c.userSuitability : m),
     0
@@ -172,8 +251,8 @@ export async function llmDecisionAndExplanation(
   const now = new Date()
   const timeContext = now.toISOString()
 
-  // Deterministic "obvious winner" shortcut: avoid LLM when there’s a clear best choice.
-  // Only applies to "now" decisions (windows are more nuanced).
+  // obvious-winner shortcut to skip llm
+  // only for now decisions
   const sorted = [...candidates].sort((a, b) => b.userSuitability - a.userSuitability)
   const top1 = sorted[0]
   const top2 = sorted[1]
@@ -223,12 +302,12 @@ export async function llmDecisionAndExplanation(
     return { decision: applyForecastPlannerNoNowOverride(state, decision, now) }
   }
 
-  // Trade-off detector: only spend tokens when there’s something to reason about.
+  // only spend tokens when trade-offs exist
   const closeRace = top1 && top2 ? lead < agentConfig.reasoning.strongCandidateMinLead : false
   const tradeoffNeeded = closeRace || memoryConflict || (mode === "FORECAST_PLANNER" && windows.length > 0)
 
-  // Medium step: tiny structured LLM gate (cheap). Runs for trade-offs and medium/high reasoning need.
-  // If reasoningNeed is high, we can skip the tiny gate and go straight to the full prompt.
+  // cheap tiny gate for medium reasoning need
+  // jump to full prompt when reasoning need is high
   if (tradeoffNeeded && reasoningNeed < agentConfig.reasoning.budget.high) {
     const tinyLlm = new ChatOpenAI({ model: "gpt-4o-mini", temperature: 0.2 })
     const tiny = tinyLlm.withStructuredOutput(TinyGateSchema)
@@ -357,8 +436,8 @@ Return only structured fields. For dates, use ISO strings for windowStart/window
     confidence: raw.confidence ?? undefined,
   }
 
-  // if the LLM chose a forecast window snap it to an actual computed window entry.
-  // prevents the model from inventing timestamps that fail self-review.
+  // snap chosen window to a real computed row
+  // avoids invented times
   if (decision.notify && decision.when === "next_window") {
     const windowsForSpot = (state.forecastWindows ?? []).filter((w) => w.spotId === decision.spotId)
     if (windowsForSpot.length === 0) {
@@ -380,14 +459,14 @@ Return only structured fields. For dates, use ISO strings for windowStart/window
       const chosen = exact ?? windowsForSpot.sort((a, b) => b.userSuitability - a.userSuitability)[0]
       decision.windowStart = chosen.start
       decision.windowEnd = chosen.end
-      // LLM copy can drift after we snap to a computed window; build push copy from the window + conditions.
+      // rebuild push copy after snapping
       const copy = buildSnappedWindowPushCopy(state, chosen)
       decision.title = copy.title
       decision.message = copy.message
     }
   }
 
-  // keep notify=false decisions clean
+  // clear notify fields when notify is false
   if (!decision.notify) {
     decision.spotId = undefined
     decision.when = undefined
@@ -397,7 +476,7 @@ Return only structured fields. For dates, use ISO strings for windowStart/window
     // keep message: notify=false paths often set a short user-facing explanation
   }
 
-  // If the LLM returns empty strings, generate user-facing copy from deterministic context.
+  // fill missing title or message from deterministic data
   const titleBlank = !decision.title || decision.title.trim().length === 0
   const messageBlank = !decision.message || decision.message.trim().length === 0
   if (decision.notify && decision.spotId && (titleBlank || messageBlank)) {
@@ -423,5 +502,23 @@ Return only structured fields. For dates, use ISO strings for windowStart/window
   }
 
   const afterNoNow = applyForecastPlannerNoNowOverride(state, decision, now)
+  if (afterNoNow.notify && afterNoNow.spotId) {
+    if (afterNoNow.when === "next_window" && afterNoNow.windowStart) {
+      const chosen = (state.forecastWindows ?? []).find(
+        (w) =>
+          w.spotId === afterNoNow.spotId &&
+          w.start.getTime() === afterNoNow.windowStart!.getTime(),
+      )
+      if (chosen) {
+        const copy = buildSnappedWindowPushCopy(state, chosen)
+        afterNoNow.title = copy.title
+        afterNoNow.message = copy.message
+      }
+    } else {
+      const copy = buildNowPushCopy(state, afterNoNow.spotId)
+      afterNoNow.title = copy.title
+      afterNoNow.message = copy.message
+    }
+  }
   return { decision: afterNoNow }
 }

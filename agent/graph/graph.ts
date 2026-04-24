@@ -20,7 +20,7 @@ import { outputDecision } from "../nodes/outputDecision"
 export type SurfGraphInput = {
   userId: string
   mode: "LIVE_NOTIFY" | "FORECAST_PLANNER"
-  /** Recent notifications for this user; agent may deprioritise re-notifying same spot. */
+  /** recent notifications for this user */
   lastNotifications?: Array<{ spotId: string; timestamp: string }>
 }
 

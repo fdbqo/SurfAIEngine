@@ -107,7 +107,7 @@ function sanitizeNotificationBody(input: string): string {
   const raw = input.replace(/\r\n/g, "\n").trim()
   if (!raw) return ""
 
-  // Keep push payloads user-facing. Strip lines that look like internal scoring/diagnostics.
+  // keep push body user-facing
   const forbidden =
     /(location\s*score|user\s*suitability|env\s*score|distance\s*score|\bscore\b|\brating\b|\bconfidence\b|\b\d{1,2}\s*\/\s*10\b|\b\d{1,3}\s*%\b)/i
 
@@ -117,9 +117,8 @@ function sanitizeNotificationBody(input: string): string {
     .filter(Boolean)
     .filter((l) => !forbidden.test(l))
 
-  // Prefer a single short line for notification UX.
-  const candidate = (safeLines[0] ?? "").trim()
-  return candidate
+  // keep a short two-line body: plain reason then technical details
+  return safeLines.slice(0, 2).join("\n").trim()
 }
 
 function getModels() {
@@ -345,14 +344,13 @@ export async function getOrInitSchedule(userId: string) {
   const { NotificationScheduleModel } = getModels()
   const existing = await NotificationScheduleModel.findOne({ userId }).lean()
   if (existing) return existing
-  // Eligible on the next cron tick (epoch). Previous +5m default caused “cron never runs”
-  // for new device registrations until 5 minutes passed.
+  // allow next cron tick for new schedules
   const nextRunAt = new Date(0)
   await NotificationScheduleModel.create({ userId, nextRunAt })
   return await NotificationScheduleModel.findOne({ userId }).lean()
 }
 
-/** Remove schedule row for a userId (e.g. after transfer abandons a stale id). */
+/** delete schedule row for a user */
 export async function deleteNotificationScheduleForUser(userId: string) {
   await connectDB()
   const { NotificationScheduleModel } = getModels()
@@ -396,7 +394,7 @@ function webpushEndpointHost(endpoint: string | undefined): string | undefined {
 }
 
 export async function sendWebPushToUser(userId: string, payload: { title: string; body: string; url: string }) {
-  // Prefer new device-target storage; fall back to legacy PushSubscription model.
+  // use device targets first, then legacy subscriptions
   const targets = await listActiveDeviceTargetsForUser(userId)
   const webTargets = targets.filter((t) => (t as any).channel === "webpush") as Array<Extract<StoredDeviceTarget, { channel: "webpush" }>>
   const subs = webTargets.length > 0 ? webTargets : await listActiveSubscriptionsForUser(userId)
@@ -528,7 +526,7 @@ export async function runAgentAndMaybeNotify(input: { userId: string; mode: "LIV
   await connectDB()
   const { NotificationEventModel } = getModels()
 
-  // Pre-check throttle to avoid wasting tokens when we know we can't notify.
+  // pre-check throttle before running agent
   const minIntervalHours = agentConfig.notificationGuard.minIntervalHours
   const latestSent = await NotificationEventModel.findOne({ userId: input.userId, sentCount: { $gt: 0 } })
     .sort({ sentAt: -1 })
@@ -569,9 +567,9 @@ export async function runAgentAndMaybeNotify(input: { userId: string; mode: "LIV
   const notify = !!decision?.notify
   const allowed = guard?.allowed !== false
 
-  // Make the outcome unambiguous and professional:
-  // - Guard block always takes precedence in messaging.
-  // - When notify=false, don't present "notification-looking" title/message fields.
+  // keep output consistent
+  // guard block takes precedence
+  // hide notify fields when notify is false
   if (!allowed) {
     const next = computeNextRunAtFromOutcome({ notify: false })
     await setNextRunAt(input.userId, next, startedAt)
@@ -621,16 +619,14 @@ export async function runAgentAndMaybeNotify(input: { userId: string; mode: "LIV
   }
 
   const title = decision?.title?.trim() ? decision.title : "Surf AI Engine — notify"
-  // Push payloads should stay user-facing: do not include internal scoring/rationale in case the agent outputs it.
+  // strip internal scoring text from push body
   const rawBody = decision?.message ? String(decision.message) : ""
   const sanitized = sanitizeNotificationBody(rawBody)
   const body = truncate(sanitized || "Surf looks worth a session.", 200)
   const url = "/"
 
   const dedupeKey = buildDedupeKey({ userId: input.userId, mode: input.mode, spotId: decision?.spotId })
-  // Only dedupe against events that actually delivered at least one push.
-  // Only rows that actually sent at least one device count; do not match legacy/missing sentCount
-  // or dedupe can stay "stuck" for a 30m bucket.
+  // dedupe only against rows that actually sent
   const already = await NotificationEventModel.findOne({
     userId: input.userId,
     dedupeKey,
@@ -656,7 +652,7 @@ export async function runAgentAndMaybeNotify(input: { userId: string; mode: "LIV
 
   const sendResult = await sendNotificationToUser(input.userId, { title, body, url })
 
-  // Only record an event for dedupe/audit if we actually delivered at least one notification.
+  // record event only when at least one push was sent
   if (sendResult.sent > 0) {
     await NotificationEventModel.create({
       userId: input.userId,
@@ -710,11 +706,7 @@ export async function runAgentAndMaybeNotify(input: { userId: string; mode: "LIV
   }
 }
 
-/**
- * Production cron: eligible `deviceprofiles` (notifications on, onboarded) with at least one
- * active `devicetargets` row, deduped by `userId`, respecting `NotificationSchedule`.
- * Optional: `CRON_INCLUDE_MOCK_USERS=1` also runs the legacy in-memory mock users (dev/tests).
- */
+/** run cron notifications for eligible users */
 export async function cronTickNotify(mode: "LIVE_NOTIFY" | "FORECAST_PLANNER" = "FORECAST_PLANNER") {
   await connectDB()
   const { NotificationScheduleModel } = getModels()
@@ -794,7 +786,7 @@ export async function cronTickNotify(mode: "LIVE_NOTIFY" | "FORECAST_PLANNER" = 
   }
 }
 
-/** @deprecated Use `cronTickNotify`; name kept for existing imports. */
+/** deprecated alias */
 export async function cronTickMockUsers(mode: "LIVE_NOTIFY" | "FORECAST_PLANNER" = "FORECAST_PLANNER") {
   return cronTickNotify(mode)
 }

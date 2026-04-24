@@ -1,21 +1,21 @@
 /**
- * Fire POST /api/push/send-test against a deployed (or local) engine.
+ * send test push request
  *
- * Vercel: set env before running (PowerShell or bash):
- *   ENGINE_BASE_URL=https://your-app.vercel.app
- *   INTERNAL_API_SECRET=...   (same as Vercel project env, if you use the gateway)
- *   PUSH_TEST_USER_ID=web:...
+ * set env values first:
+ *   engine_base_url=https://your-app.vercel.app
+ *   internal_api_secret=...
+ *   push_test_user_id=web:<your-user-id>
  *
  *   npm run push:test
  *   node scripts/push-test.mjs "web:your-uuid"
  *
- * PowerShell prints the JSON body here. Server `console` lines (e.g. [push/send-test]) appear:
- *   - Vercel: dashboard → Logs, or `vercel logs <deployment-url> --follow` (Vercel CLI)
- *   - Local: the terminal where `npm run dev` is running, not this window
+ * this prints api response json:
+ *   - vercel logs show server output
+ *   - local logs are in the dev server terminal
  *
- * Android: no separate "run" — same request delivers to any Expo token registered
- * in Mongo for that userId. Ensure the app called POST /api/v1/devices/register with
- * channel expo, then leave the app in background and run this from your PC.
+ * android uses same request:
+ * in mongo for that user id, ensure the app called post /api/v1/devices/register with
+ * channel expo, then leave the app in background and run this from your PC
  */
 
 const base = (process.env.ENGINE_BASE_URL || process.env.VERCEL_URL || "").replace(/\/$/, "")

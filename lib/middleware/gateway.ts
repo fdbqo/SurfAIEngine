@@ -1,18 +1,14 @@
 import type { NextRequest } from "next/server"
 
-/**
- * Vercel: middleware runs on the Edge; set env vars in the project (Production / Preview / Development).
- * Preview deployments still use NODE_ENV=production — use PUBLIC_UI_ENABLED on Preview if you need the agent UI.
- * Cross-origin browser calls require ALLOWED_ORIGINS to include your frontend origin(s), including preview URLs if needed.
- */
+/** gateway checks for ui, cors, and internal key */
 
-/** When `true`, the React pages (e.g. agent runner) are served. Default: off in production, on in development. */
+/** public ui enabled flag */
 export function isPublicUiEnabled(): boolean {
   const v = process.env.PUBLIC_UI_ENABLED
   return v === "true" || v === "1"
 }
 
-/** When `true`, HTML/Next assets are not served (404). */
+/** whether to block html and next assets */
 export function shouldBlockPublicUi(): boolean {
   if (isPublicUiEnabled()) return false
   if (process.env.NODE_ENV !== "production") return false
@@ -31,7 +27,7 @@ function parseAllowedOrigins(): string[] {
     .filter(Boolean)
 }
 
-/** Routes that skip `INTERNAL_API_SECRET` when it is set (browser/cron/device flows). */
+/** routes that skip internal key check */
 const DEFAULT_INTERNAL_API_KEY_SKIP_PREFIXES = [
   "/api/push/vapid-public-key",
   "/api/push/subscribe",
@@ -59,7 +55,7 @@ export function shouldSkipInternalApiKey(pathname: string): boolean {
   return internalApiKeySkipPrefixes().some((p) => pathname === p || pathname.startsWith(`${p}/`))
 }
 
-/** Origin present and allowlist non-empty → must match. */
+/** block browser origin when not allowlisted */
 export function isBrowserOriginForbidden(request: NextRequest): boolean {
   const allowed = parseAllowedOrigins()
   const origin = request.headers.get("origin")

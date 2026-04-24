@@ -1,7 +1,4 @@
-/**
- * Notification timing context: time-of-day labels, lead time, and feasibility
- * guidance. Single place for constants so we don't scatter magic numbers.
- */
+/** time labels and lead-time helpers */
 
 export type TimeOfDayLabel =
   | "early_morning"
@@ -11,7 +8,7 @@ export type TimeOfDayLabel =
   | "evening"
   | "night"
 
-// Boundaries are local hour (0–23). early_morning = 5–8, morning = 8–12, etc.
+// local-hour boundaries
 const EARLY_MORNING_START = 5
 const MORNING_START = 8
 const MIDDAY_START = 12
@@ -29,7 +26,7 @@ export function getTimeOfDayLabel(localHour: number): TimeOfDayLabel {
   return "evening"
 }
 
-/** Hours from now until window start (can be negative if window is in the past). */
+/** hours until window start */
 export function getHoursUntil(windowStart: Date, now: Date): number {
   return (windowStart.getTime() - now.getTime()) / (60 * 60 * 1000)
 }
@@ -44,7 +41,7 @@ export function getFutureDiscountFactor(hoursUntilStart: number): number {
   return Math.round(linear * 100) / 100
 }
 
-/** Human-readable time-of-day for prompts (kept general). */
+/** friendly time label for prompts */
 export function formatTimeOfDayForPrompt(label: TimeOfDayLabel): string {
   switch (label) {
     case "early_morning":

@@ -5,12 +5,12 @@ import type { Spot } from "@/lib/shared/spots"
 
 export type AgentMode = "LIVE_NOTIFY" | "FORECAST_PLANNER"
 
-// Normalized user context (from loadUserContext)
+// normalized user context
 export type AgentUserContext = {
   skillLevel: "beginner" | "intermediate" | "advanced"
-  /** Usual/home location (saved). Used when current location is unavailable. */
+  /** saved home location */
   usualLocation?: { lat: number; lon: number }
-  /** Current location when available (e.g. from GPS). */
+  /** latest location */
   currentLocation?: { lat: number; lon: number }
   maxDistanceKm?: number
   preferredBreaks?: Array<"beach" | "reef" | "point" | "bay" | "harbour" | "island">
@@ -21,7 +21,7 @@ export type AgentUserContext = {
   rawUser: User
 }
 
-/** Prefer current location (e.g. GPS) when available, else usual location. */
+/** use current location, else home location */
 export function getLocationForDistance(ctx: AgentUserContext | null | undefined): { lat: number; lon: number } | undefined {
   if (!ctx) return undefined
   return ctx.currentLocation ?? ctx.usualLocation
@@ -55,7 +55,7 @@ export type ScoredSpot = {
   userSuitability: number
   bestWindow?: { start: Date; end: Date }
   reasons: string[]
-  /** Distance from user home to spot (km). Used for timing feasibility. */
+  /** distance from user to spot */
   distanceKm?: number
 }
 
@@ -64,9 +64,9 @@ export type CandidateSummary = {
   summary: string
   envScore: number
   userSuitability: number
-  /** Distance from user home to spot (km). */
+  /** distance from user to spot */
   distanceKm?: number
-  /** Time-of-day label for "now" (e.g. early_morning, afternoon). */
+  /** time-of-day label for now */
   timeOfDayLabel?: string
 }
 
@@ -78,14 +78,24 @@ export type ForecastWindow = {
   envScore: number
   userSuitability: number
   summary: string
-  /** Distance from user home to spot (km). */
+  /** distance from user to spot */
   distanceKm?: number
-  /** Hours from now until window start. */
+  /** hours until window start */
   hoursUntilStart?: number
-  /** Time-of-day label for window start (e.g. early_morning, afternoon). */
+  /** time-of-day label for window start */
   timeOfDayLabel?: string
-  /** 0–1; today/tomorrow = 1, further out reduced so user/model know forecast is less certain. */
+  /** forecast confidence from 0 to 1 */
   forecastConfidence?: number
+  /** window wave height in meters */
+  waveHeight?: number
+  /** window swell height in meters */
+  swellHeight?: number
+  /** window swell period in seconds */
+  swellPeriod?: number
+  /** window wind at 10m in km/h */
+  windSpeed10m?: number
+  /** window wind direction in degrees */
+  windDirection?: number
 }
 
 export type AgentDecision = {
@@ -122,11 +132,11 @@ export type RunLogEntry = {
 
 export type LastNotificationEntry = { spotId: string; timestamp: string }
 
-// LangGraph state (matches doc shape; nodes read/write partials)
+// graph state
 export interface SurfAgentState {
   userId: string
   mode: AgentMode
-  /** Recent notifications sent to this user (e.g. from API). Agent can avoid re-notifying same spot. */
+  /** recent notifications for this user */
   lastNotifications?: LastNotificationEntry[]
   stepCount?: number
   runLog?: RunLogEntry[]
@@ -146,12 +156,12 @@ export interface SurfAgentState {
   forecastWindows?: ForecastWindow[]
   decision?: AgentDecision | null
   review?: AgentReview | null
-  /** Number of times we've retried the LLM after revise/reject (cap at 1). */
+  /** llm retry count */
   llmRetryCount?: number
   guard?: NotificationGuardResult | null
 }
 
-// Annotation for StateGraph (each key last-value wins)
+// graph annotation
 const SurfAgentStateAnnotation = Annotation.Root({
   userId: Annotation<string>(),
   mode: Annotation<AgentMode>(),
