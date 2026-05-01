@@ -156,6 +156,7 @@ export async function getForecast3hForSpot(
     waveHeight: number
     swellHeight: number
     swellPeriod: number
+    swellDirection: number
     windSpeed10m: number
     windDirection: number
   }>
@@ -175,6 +176,7 @@ export async function getForecast3hForSpot(
     waveHeight: d.waveHeight,
     swellHeight: d.swellHeight,
     swellPeriod: d.swellPeriod,
+    swellDirection: d.swellDirection,
     windSpeed10m: d.windSpeed10m,
     windDirection: d.windDirection,
   }))

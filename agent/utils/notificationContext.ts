@@ -41,6 +41,16 @@ export function getFutureDiscountFactor(hoursUntilStart: number): number {
   return Math.round(linear * 100) / 100
 }
 
+/** Ranking-only factor: caps how harsh far-future discount is when surf score is already strong. */
+export function getForecastRankingFactor(hoursUntilStart: number, surfScoreOutOf10: number): number {
+  const base = getFutureDiscountFactor(hoursUntilStart)
+  const rc = agentConfig.forecastWindows.rankingConfidence
+  if (surfScoreOutOf10 >= rc.minSurfScoreForFloor) {
+    return Math.max(base, rc.minFactorWhenStrong)
+  }
+  return base
+}
+
 /** friendly time label for prompts */
 export function formatTimeOfDayForPrompt(label: TimeOfDayLabel): string {
   switch (label) {

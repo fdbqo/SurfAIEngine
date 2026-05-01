@@ -39,7 +39,17 @@ function makeState(overrides: Partial<SurfAgentStateType> = {}): SurfAgentStateT
 describe("computeForecastWindows", () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    const spot = { id: "s1", name: "Spot1", lat: 53, lon: -9, region: "Connacht", country: "IE", type: "beach" }
+    const spot = {
+      id: "s1",
+      name: "Spot1",
+      lat: 53,
+      lon: -9,
+      region: "Connacht",
+      country: "IE",
+      county: "Sligo",
+      type: "beach" as const,
+      orientation: 270,
+    }
     mockGetSpotsById.mockReturnValue(
       new Map([
         ["s1", spot as unknown as never],
@@ -68,6 +78,7 @@ describe("computeForecastWindows", () => {
         waveHeight: 1,
         swellHeight: 1,
         swellPeriod: 10,
+        swellDirection: 280,
         windSpeed10m: 5,
         windDirection: 270,
       },
@@ -88,6 +99,7 @@ describe("computeForecastWindows", () => {
         waveHeight: 1,
         swellHeight: 1,
         swellPeriod: 10,
+        swellDirection: 280,
         windSpeed10m: 5,
         windDirection: 270,
       },
@@ -97,6 +109,7 @@ describe("computeForecastWindows", () => {
         waveHeight: 1,
         swellHeight: 1,
         swellPeriod: 10,
+        swellDirection: 280,
         windSpeed10m: 5,
         windDirection: 270,
       },
@@ -108,5 +121,36 @@ describe("computeForecastWindows", () => {
     expect(near).toBeDefined()
     expect(far).toBeDefined()
     expect((far?.userSuitability ?? 0)).toBeGreaterThan(near?.userSuitability ?? 0)
+  })
+
+  it("drops windows that start late local evening (default >= 20) or at night", async () => {
+    const startOk = new Date(Date.now() + 4 * 60 * 60 * 1000)
+    const startLate = new Date(Date.now() + 6 * 60 * 60 * 1000)
+    mockGetForecast3hForSpot.mockResolvedValue([
+      {
+        windowStart: startOk,
+        localHour: 12,
+        waveHeight: 1,
+        swellHeight: 1,
+        swellPeriod: 10,
+        swellDirection: 280,
+        windSpeed10m: 5,
+        windDirection: 270,
+      },
+      {
+        windowStart: startLate,
+        localHour: 20,
+        waveHeight: 1,
+        swellHeight: 1,
+        swellPeriod: 10,
+        swellDirection: 280,
+        windSpeed10m: 5,
+        windDirection: 270,
+      },
+    ] as unknown as Awaited<ReturnType<typeof getForecast3hForSpot>>)
+    const out = await computeForecastWindows(makeState({ spotIds: ["s1"] }))
+    const windows = out.forecastWindows ?? []
+    expect(windows.some((w) => w.start.getTime() === startLate.getTime())).toBe(false)
+    expect(windows.some((w) => w.start.getTime() === startOk.getTime())).toBe(true)
   })
 })

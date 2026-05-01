@@ -10,14 +10,29 @@ import {
   getTimeOfDayLabel,
   getHoursUntil,
   formatTimeOfDayForPrompt,
-  getFutureDiscountFactor,
+  getForecastRankingFactor,
 } from "../utils/notificationContext"
 import { FALLBACK_LOCATION } from "@/lib/shared/defaults"
+import { preferenceFitBonus } from "../utils/preferenceRanking"
 
 const { maxWindowsPerSpot, topSpots, wildcardMinScore, maxTotalWindows, daysAhead, fallbackDaysAhead } =
   agentConfig.forecastWindows
 const { topN: topScoredToEnsure } = agentConfig.candidates
 const { minScoreToCallLlm } = agentConfig.decisionGate
+
+function roundScore1(n: number): number {
+  return Math.round(n * 10) / 10
+}
+
+function shouldExcludeForecastWindowStart(
+  localHour: number,
+  timeOfDayLabel: ReturnType<typeof getTimeOfDayLabel>,
+): boolean {
+  const cfg = agentConfig.forecastWindows
+  if (cfg.excludeNightWindowStarts && timeOfDayLabel === "night") return true
+  if (cfg.excludeForecastWindowStartHourGte < 24 && localHour >= cfg.excludeForecastWindowStartHourGte) return true
+  return false
+}
 
 function getForecastDistanceScore(baseDistanceScore: number, hoursUntilStart: number): number {
   const cfg = agentConfig.forecastWindows.distanceSoftening
@@ -62,14 +77,16 @@ export async function computeForecastWindows(
       for (const b of blocks) {
         const windowLocalHour = b.localHour ?? b.windowStart.getUTCHours()
         const timeOfDayLabel = getTimeOfDayLabel(windowLocalHour)
+        if (shouldExcludeForecastWindowStart(windowLocalHour, timeOfDayLabel)) {
+          continue
+        }
         const hoursUntilStart = getHoursUntil(b.windowStart, now)
-        const confidence = getFutureDiscountFactor(hoursUntilStart)
 
         const pseudoConditions = {
           spotId,
           swellHeight: b.swellHeight,
           swellPeriod: b.swellPeriod,
-          swellDirection: 270,
+          swellDirection: Number.isFinite(b.swellDirection) ? b.swellDirection : spot.orientation,
           waveHeight: b.waveHeight,
           wavePeriod: b.swellPeriod,
           windSpeed: b.windSpeed10m,
@@ -84,16 +101,14 @@ export async function computeForecastWindows(
         const distSc = getForecastDistanceScore(distanceScore(distKm, strictness), hoursUntilStart)
         const envScore = Math.round(scored.score * 10) / 10
         const distanceWeighted = Math.round((scored.score / 10) * distSc * 100) / 100
-        const userSuitability = Math.min(10, Math.max(0, distanceWeighted * 10))
-        const adjustedScore = Math.round(userSuitability * confidence * 10) / 10
-
-        if (agentConfig.forecastWindows.excludeNightWindowStarts && timeOfDayLabel === "night") {
-          continue
-        }
+        const rawUserSuitability10 = Math.min(10, Math.max(0, distanceWeighted * 10 + preferenceFitBonus(requiredUser.preferences, b.waveHeight)))
+        const userSuitability = roundScore1(rawUserSuitability10)
+        const rankingFactor = getForecastRankingFactor(hoursUntilStart, scored.score)
+        const adjustedScore = roundScore1(userSuitability * rankingFactor)
 
         const timeDesc = `${formatTimeOfDayForPrompt(timeOfDayLabel)}, in ${hoursUntilStart < 0 ? "past" : `${Math.round(hoursUntilStart)}h`}`
         const distDesc = `${distKm}km away`
-        const confidenceNote = confidence < 1 ? ` (forecast confidence ${confidence})` : ""
+        const confidenceNote = rankingFactor < 1 ? ` (forecast confidence ${rankingFactor})` : ""
         const summary = `Spot: ${spot.name}, ${b.windowStart.toISOString()}–+3h (${timeDesc}, ${distDesc}), env ${envScore}/10, user ${userSuitability}/10${confidenceNote}`
 
         windows.push({
@@ -107,7 +122,7 @@ export async function computeForecastWindows(
           distanceKm: distKm,
           hoursUntilStart: Math.round(hoursUntilStart * 10) / 10,
           timeOfDayLabel,
-          forecastConfidence: confidence,
+          forecastConfidence: rankingFactor,
           waveHeight: b.waveHeight,
           swellHeight: b.swellHeight,
           swellPeriod: b.swellPeriod,

@@ -2,6 +2,10 @@ import type { SurfAgentStateType, AgentReview } from "../state"
 
 import { agentConfig } from "../config"
 
+function roundScore1(n: number): number {
+  return Math.round(n * 10) / 10
+}
+
 export function selfReviewAndValidation(state: SurfAgentStateType): Partial<SurfAgentStateType> {
   const decision = state.decision
   const scored = state.scored ?? []
@@ -45,14 +49,14 @@ export function selfReviewAndValidation(state: SurfAgentStateType): Partial<Surf
     if (chosenWindow.userSuitability < minUserSuitability) {
       review.verdict = "revise"
       review.issues = [
-        `Future-window suitability ${chosenWindow.userSuitability} below threshold ${minUserSuitability}`,
+        `Future-window suitability ${roundScore1(chosenWindow.userSuitability)} below threshold ${minUserSuitability}`,
       ]
       return { review }
     }
     if (chosenWindow.envScore < minEnvScoreToNotify) {
       review.verdict = "revise"
       review.issues = [
-        `Future-window envScore ${chosenWindow.envScore} below threshold ${minEnvScoreToNotify}`,
+        `Future-window envScore ${roundScore1(chosenWindow.envScore)} below threshold ${minEnvScoreToNotify}`,
       ]
       return { review }
     }
@@ -60,12 +64,12 @@ export function selfReviewAndValidation(state: SurfAgentStateType): Partial<Surf
     const chosenScore = scored.find((s) => s.spotId === decision.spotId)
     if (chosenScore && chosenScore.userSuitability < minUserSuitability) {
       review.verdict = "revise"
-      review.issues = [`User suitability ${chosenScore.userSuitability} below threshold ${minUserSuitability}`]
+      review.issues = [`User suitability ${roundScore1(chosenScore.userSuitability)} below threshold ${minUserSuitability}`]
       return { review }
     }
     if (chosenScore && chosenScore.envScore < minEnvScoreToNotify) {
       review.verdict = "revise"
-      review.issues = [`Env score ${chosenScore.envScore} below threshold ${minEnvScoreToNotify}`]
+      review.issues = [`Env score ${roundScore1(chosenScore.envScore)} below threshold ${minEnvScoreToNotify}`]
       return { review }
     }
   }

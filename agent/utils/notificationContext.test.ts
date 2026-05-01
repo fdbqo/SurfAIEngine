@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
-import { getFutureDiscountFactor } from "./notificationContext"
+import { getForecastRankingFactor, getFutureDiscountFactor } from "./notificationContext"
 
 describe("getFutureDiscountFactor", () => {
   const originalEnv = process.env
@@ -35,5 +35,19 @@ describe("getFutureDiscountFactor", () => {
   it("returns rounded to 2 decimal places", () => {
     const v = getFutureDiscountFactor(60)
     expect(v).toBe(Math.round(v * 100) / 100)
+  })
+})
+
+describe("getForecastRankingFactor", () => {
+  it("floors discount for strong surf scores far out", () => {
+    const raw = getFutureDiscountFactor(150)
+    const boosted = getForecastRankingFactor(150, 8)
+    expect(boosted).toBeGreaterThanOrEqual(0.92)
+    if (raw < 0.92) expect(boosted).toBe(0.92)
+  })
+
+  it("matches base curve when surf score is modest", () => {
+    const raw = getFutureDiscountFactor(150)
+    expect(getForecastRankingFactor(150, 6)).toBe(raw)
   })
 })

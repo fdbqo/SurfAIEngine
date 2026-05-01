@@ -28,12 +28,6 @@ function truncate(s: string, max: number): string {
   return s.slice(0, max - 3) + "..."
 }
 
-function hoursSince(tsIso: string, now: Date): number | null {
-  const t = Date.parse(tsIso)
-  if (Number.isNaN(t)) return null
-  return (now.getTime() - t) / (60 * 60 * 1000)
-}
-
 function clamp01(n: number): number {
   return Math.max(0, Math.min(1, n))
 }
@@ -387,7 +381,6 @@ function buildNowPushCopy(state: SurfAgentStateType, spotId: string): { title: s
 
 function computeReasoningNeed(state: SurfAgentStateType, args: {
   hasWindows: boolean
-  memoryConflict: boolean
   top1?: { distanceKm?: number }
 }): number {
   const raw = state.user?.rawUser
@@ -402,15 +395,13 @@ function computeReasoningNeed(state: SurfAgentStateType, args: {
   const comfort = clamp01((3 - maxWaveM) / 2)
   const maxDist = resolvedMaxDistanceKm(state.user?.maxDistanceKm, prefs?.maxDistanceKm) ?? UNSET_MAX_DISTANCE_KM
   const distancePref = clamp01(maxDist / 80)
-  const memory = args.memoryConflict ? 1 : 0
   const windows = args.hasWindows ? 1 : 0
   const r =
     0.25 * strictness +
     0.2 * risk +
     0.2 * comfort +
     0.15 * distancePref +
-    0.1 * memory +
-    0.1 * windows
+    0.2 * windows
   return clamp01(r)
 }
 
@@ -477,20 +468,10 @@ export async function llmDecisionAndExplanation(
   const top1 = sorted[0]
   const top2 = sorted[1]
   const lead = top1 && top2 ? top1.userSuitability - top2.userSuitability : Infinity
-  const recentlyNotifiedSpotIds = new Set(
-    (state.lastNotifications ?? [])
-      .filter((n) => {
-        const h = hoursSince(n.timestamp, now)
-        return h != null && h >= 0 && h <= agentConfig.reasoning.recentNotificationHours
-      })
-      .map((n) => n.spotId)
-  )
-  const memoryConflict = top1?.spotId ? recentlyNotifiedSpotIds.has(top1.spotId) : false
   const hasAnyGoodWindow = windows.some((w) => w.userSuitability >= agentConfig.reasoning.strongCandidateMinSuitability)
 
   const reasoningNeed = computeReasoningNeed(state, {
     hasWindows: mode === "FORECAST_PLANNER" && windows.length > 0,
-    memoryConflict,
     top1,
   })
 
@@ -499,7 +480,6 @@ export async function llmDecisionAndExplanation(
   if (
     top1 &&
     !hasAnyGoodWindow &&
-    !memoryConflict &&
     top1.userSuitability >= agentConfig.reasoning.strongCandidateMinSuitability &&
     lead >= agentConfig.reasoning.strongCandidateMinLead &&
     reasoningNeed < agentConfig.reasoning.budget.low &&
@@ -524,7 +504,7 @@ export async function llmDecisionAndExplanation(
 
   // only spend tokens when trade-offs exist
   const closeRace = top1 && top2 ? lead < agentConfig.reasoning.strongCandidateMinLead : false
-  const tradeoffNeeded = closeRace || memoryConflict || (mode === "FORECAST_PLANNER" && windows.length > 0)
+  const tradeoffNeeded = closeRace || (mode === "FORECAST_PLANNER" && windows.length > 0)
 
   // cheap tiny gate for medium reasoning need
   // jump to full prompt when reasoning need is high
@@ -536,7 +516,7 @@ export async function llmDecisionAndExplanation(
     const windowRule = hasWindows
       ? `\nIMPORTANT: Forecast windows exist. Do NOT choose action="decide_now". Choose only action="stop" or action="use_full" so the full window-aware reasoning can decide timing.`
       : ""
-    const tinyPrompt = `Decide whether we should notify a user about surf, without spending many tokens.\n\nCurrent time: ${timeContext}. Mode: ${mode}.\nUser preferences (saved): ${formatLlmPrefsSummary(state)}.${userNoteLine}\n\nDeterministic scoring summary:\n- top1 suitability: ${top1?.userSuitability ?? 0}\n- top2 suitability: ${top2?.userSuitability ?? 0}\n- lead (top1-top2): ${Number.isFinite(lead) ? lead.toFixed(1) : "n/a"}\n- has forecast windows: ${windows.length > 0}\n- recently notified top1 spot: ${memoryConflict}\n\nValid spotIds: ${validSpotIds.join(", ")}\n\nReturn:\n- action="stop" if we should not notify.\n- action="decide_now" if notifying now is straightforward; include spotId.\n- action="use_full" if we need the full candidate/window context to choose well.${windowRule}\n\nKeep rationale short and non-technical.`
+    const tinyPrompt = `Decide whether we should notify a user about surf, without spending many tokens.\n\nCurrent time: ${timeContext}. Mode: ${mode}.\nUser preferences (saved): ${formatLlmPrefsSummary(state)}.${userNoteLine}\n\nDeterministic scoring summary:\n- top1 suitability: ${top1?.userSuitability ?? 0}\n- top2 suitability: ${top2?.userSuitability ?? 0}\n- lead (top1-top2): ${Number.isFinite(lead) ? lead.toFixed(1) : "n/a"}\n- has forecast windows: ${windows.length > 0}\n\nValid spotIds: ${validSpotIds.join(", ")}\n\nReturn:\n- action="stop" if we should not notify.\n- action="decide_now" if notifying now is straightforward; include spotId.\n- action="use_full" if we need the full candidate/window context to choose well.${windowRule}\n\nKeep rationale short and non-technical.`
 
     const gate = await tiny.invoke(tinyPrompt)
     if (gate.action === "stop") {
@@ -583,13 +563,17 @@ export async function llmDecisionAndExplanation(
   const structured = llm.withStructuredOutput(DecisionSchema)
 
   const maxChars = agentConfig.prompt.summaryMaxChars
-  const windowSpotIds = [...new Set(windows.map((w) => w.spotId))]
+  const windowsSorted =
+    mode === "FORECAST_PLANNER" && windows.length > 0
+      ? [...windows].sort((a, b) => b.userSuitability - a.userSuitability)
+      : windows
+  const windowSpotIds = [...new Set(windowsSorted.map((w) => w.spotId))]
   const windowsSection =
-    mode === "FORECAST_PLANNER" && windows.length
+    mode === "FORECAST_PLANNER" && windowsSorted.length
       ? `
 
-Upcoming windows (each line includes distance, time-of-day, lead time; optional "forecast confidence" < 1 means further out and less certain—prefer these over "now" when they are the better, realistic plan):
-${windows.map((w) => `- ${truncate(w.summary, maxChars)}`).join("\n")}
+Upcoming windows (sorted best-first by deterministic quality for this user; each line includes distance, time-of-day, lead time; optional "forecast confidence" < 1 means further out and less certain):
+${windowsSorted.map((w) => `- ${truncate(w.summary, maxChars)}`).join("\n")}
 
 SpotIds that have at least one upcoming window in the data above (use ONLY these for when="window"):
 ${windowSpotIds.join(", ")}`
@@ -598,7 +582,7 @@ ${windowSpotIds.join(", ")}`
   const lastNotifs = state.lastNotifications ?? []
   const lastNotifsText =
     lastNotifs.length > 0
-      ? `\nRecent notifications sent to this user: ${lastNotifs.map((n) => `${n.spotId} (${n.timestamp})`).join("; ")}. Prefer not to re-notify the same spot soon unless conditions are clearly better.`
+      ? `\nRecent notifications (background only—the backend enforces frequency limits): ${lastNotifs.map((n) => `${n.spotId} (${n.timestamp})`).join("; ")}. Do NOT avoid a spot or window solely because it appears here. Choose the option that best matches surf conditions for this user's preferences (see window lines and candidate lines).`
       : ""
 
   const prompt = `You are a surf notification agent. Decide whether to notify the user about surf conditions.
@@ -618,20 +602,20 @@ ${candidates.map((c) => `- ${truncate(c.summary, maxChars)}`).join("\n")}
 
 ${windowsSection}
 
-Notification timing: consider distance, lead time, and time of day when choosing a window—prefer options that give the user enough time to get there and that fit typical schedules.
+Notification timing: prioritize **better surf** (waves, wind, swell as reflected in each window line). **Tomorrow morning or midday with stronger conditions is preferable to a weaker window only because it is sooner.** Treat reasonable lead time as helpful for planning, not a reason to pick marginal surf.
 
 FORECAST_PLANNER — local time and "now":
 - If any candidate line says the time of day is "night" (roughly 21:00–05:00 local at the break) or "evening" in a way that is too late for a spontaneous session, you MUST NOT set when="now". Pick the best future window from the list (when="window") or set notify=false. Never ask the user to go surfing immediately in the last hours of the day; suggest a morning or daytime window the next day instead.
 - When in doubt in FORECAST mode after dark, prefer a window starting tomorrow morning or midday over "now".
 
-Decision rules (FORECAST_PLANNER — realism first):
-- Prefer notify=true with when="window" and spotId from the "SpotIds that have at least one upcoming window" list, using the best-matching future window. That is the default, trustworthy recommendation.
+Decision rules (FORECAST_PLANNER — conditions first):
+- Prefer notify=true with when="window" and spotId from the "SpotIds that have at least one upcoming window" list, choosing the **future window that best matches conditions for this user**. The window list is sorted with strongest matches first—start from the top when picking unless you set notify=false with a clear rationale.
 - Only use when="now" for a top candidate that is a short drive away and the time of day still allows a same-day session (morning through afternoon); do not use "now" for evening or night, or for far-away spots—use a future window or notify=false.
 - If when="window", spotId MUST be one of the window spotIds listed above (not only the generic valid list). windowStart/windowEnd should match an interval you infer from the window lines.
 - For FORECAST_PLANNER, only set when="now" if local time of day is plausibly still surfable the same day (e.g. morning/afternoon) and a same-day session is realistic; if summaries say "night", use a window, not "now".
 - Otherwise, if current conditions are good enough and a spontaneous session is still realistic, set notify=true, when="now", and spotId to the best current candidate.
 - If nothing is worth notifying, set notify=false, set spotId to null, and explain in rationale; set whyNotOthers as short bullets.
-- In rationale: when you chose one time over another (e.g. "now" vs a future window, or one window over others), briefly explain why (e.g. "Afternoon window has better conditions and enough lead time; 6am window is too far and too early."). Use whyNotOthers for short bullets on why you did not pick other options.
+- In rationale: when you chose one time over another (e.g. "now" vs a future window, or one window over others), briefly explain why in terms of surf quality and timing (e.g. "Tomorrow morning's window lines up better with swell and wind than this afternoon's weaker fetch."). Use whyNotOthers for short bullets on why you did not pick other options.
 - When notify=true: you MUST provide a short non-empty title and a clear non-empty message.
   - The title and message MUST refer to the SAME break as spotId (find the name in Top candidates for that id). Do not mix up two different breaks.
   - The message MUST mention the spot name (from the summaries) and whether it's for now vs a future window.

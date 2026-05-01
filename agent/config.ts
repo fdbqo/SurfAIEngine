@@ -19,6 +19,25 @@ export const agentConfig = {
     fallbackDaysAhead: Number(process.env.AGENT_FORECAST_FALLBACK_DAYS_AHEAD) || 9,
     /** skip windows that start at night */
     excludeNightWindowStarts: process.env.AGENT_EXCLUDE_NIGHT_FORECAST_WINDOWS !== "0",
+    /**
+     * Drop windows where **local** block-start hour is >= this (0–24). Default 20 = nothing starting 8pm+ local, no one goes surfing during night.
+     * Set env to 24 to disable this filter (night exclusion still applies when excludeNightWindowStarts is true).
+     */
+    excludeForecastWindowStartHourGte: Math.min(
+      24,
+      Math.max(
+        0,
+        Number(process.env.AGENT_EXCLUDE_FORECAST_START_HOUR_GTE ?? 20) || 20,
+      ),
+    ),
+    /**
+     * Far future windows use a confidence factor on ranking (adjustedScore).
+     * Strong surf scores get a floor so good tomorrow sessions are not buried vs weak “soon” slots.
+     */
+    rankingConfidence: {
+      minSurfScoreForFloor: 7,
+      minFactorWhenStrong: 0.92,
+    },
     /** ease distance penalty for far-off windows */
     distanceSoftening: {
       startHours: Number(process.env.AGENT_FORECAST_DISTANCE_SOFTEN_START_HOURS) || 24,
