@@ -117,8 +117,8 @@ function sanitizeNotificationBody(input: string): string {
     .filter(Boolean)
     .filter((l) => !forbidden.test(l))
 
-  // keep a short two-line body: plain reason then technical details
-  return safeLines.slice(0, 2).join("\n").trim()
+  // keep up to three lines: conditions, waves, footer (distance · timing)
+  return safeLines.slice(0, 3).join("\n").trim()
 }
 
 function getModels() {
