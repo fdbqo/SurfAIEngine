@@ -164,9 +164,13 @@ function buildPushWaveSizeLine(waveHeightM: number | undefined, waveUnitRaw: str
   const unit = String(waveUnitRaw ?? "").toLowerCase()
   if (unit.includes("ft")) {
     const ft = toFeet(waveHeightM)
-    const low = Math.max(1, Math.round(ft - 0.75))
-    const high = Math.max(low + 1, Math.round(ft + 0.75))
-    return `${cat} waves (around ${low}\u2013${high} ft)`
+    const low = Math.max(1, Math.floor(ft))
+    // Only span two integers when most of the signal sits in the upper half (avoids ~4.3 → "4–5").
+    const showRange = ft >= low + 0.5
+    if (!showRange) {
+      return `${cat} waves (around ${Math.round(ft)} ft)`
+    }
+    return `${cat} waves (around ${low}\u2013${low + 1} ft)`
   }
   const low = Math.max(0.3, Math.round((waveHeightM - 0.2) * 10) / 10)
   const high = Math.max(low + 0.2, Math.round((waveHeightM + 0.25) * 10) / 10)
