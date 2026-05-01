@@ -7,6 +7,7 @@ import {
   UNSET_MAX_DISTANCE_KM,
   UNSET_MAX_WAVE_HEIGHT_M,
   isActiveUserMax,
+  isActiveUserMin,
 } from "@/lib/shared/preferenceBounds"
 import {
   applyForecastPlannerNoNowOverride,
@@ -14,6 +15,13 @@ import {
 } from "../utils/forecastNoNowSession"
 import { isPlausibleNowForForecast } from "../utils/plausibleNowSession"
 import type { SpotConditions } from "@/lib/shared/types"
+import { getSpotById, type Spot } from "@/lib/shared/spots"
+import { formatTimeOfDayForPrompt, type TimeOfDayLabel } from "../utils/notificationContext"
+import { resolvedMaxDistanceKm } from "../utils/preferenceRanking"
+import { formatLlmPrefsSummary } from "../utils/preferencePrompt"
+
+/** aligns with Expo/Web Push practical limits after sanitization (two lines) */
+const PUSH_MESSAGE_BODY_MAX = 240
 
 function truncate(s: string, max: number): string {
   if (s.length <= max) return s
@@ -117,6 +125,185 @@ function getSpotName(state: SurfAgentStateType, spotId: string, fallback?: strin
   return fromCandidate || fallback || "this break"
 }
 
+function windRelationWord(spot: Spot, windDirDeg: number): "offshore" | "onshore" | "cross" {
+  const offshoreDir = (spot.orientation + 180) % 360
+  let diff = Math.abs(offshoreDir - windDirDeg)
+  if (diff > 180) diff = 360 - diff
+  if (diff < 45) return "offshore"
+  if (diff < 90) return "cross"
+  return "onshore"
+}
+
+function windStrengthWord(kmh: number): "calm" | "light" | "moderate" | "strong" {
+  if (kmh < 6) return "calm"
+  if (kmh < 12) return "light"
+  if (kmh < 25) return "moderate"
+  return "strong"
+}
+
+function waveSizeWord(meters: number): "flat" | "small" | "medium" | "head-high" {
+  if (meters < 0.35) return "flat"
+  if (meters < 0.85) return "small"
+  if (meters < 1.75) return "medium"
+  return "head-high"
+}
+
+function swellShapePhrase(heightM: number | undefined, periodS: number | undefined): string | null {
+  if (heightM == null || periodS == null || !Number.isFinite(heightM) || !Number.isFinite(periodS)) return null
+  const power = heightM * periodS
+  if (power < 3) return "mushy swell"
+  if (power < 8) return "short-period swell"
+  if (power < 15) return "organized swell"
+  return "powerful, lined-up swell"
+}
+
+/**
+ * Short clauses comparing this window / moment to saved prefs (distance, wave min/max, wind,
+ * swell period, break-type toggles, notify strictness, risk). No generic skill-only closer.
+ */
+function buildPreferenceAlignmentPhrase(
+  state: SurfAgentStateType,
+  ctx: {
+    spotId: string
+    distanceKm?: number
+    waveHeightM?: number
+    windKmh?: number
+    swellPeriodS?: number
+  },
+): string {
+  const userCtx = state.user
+  const prefs = userCtx?.rawUser?.preferences
+  if (!userCtx || !prefs) return "Lines up with your saved preferences."
+
+  type Bit = { weight: number; text: string }
+  const bits: Bit[] = []
+
+  const maxDist = userCtx.maxDistanceKm
+  if (isActiveUserMax(maxDist) && ctx.distanceKm != null && Number.isFinite(ctx.distanceKm) && maxDist! > 0) {
+    const r = ctx.distanceKm / maxDist!
+    const text =
+      r <= 0.45
+        ? "Much closer than your max drive distance."
+        : r <= 0.85
+          ? "Inside your saved drive-distance limit."
+          : "Toward the upper end of your drive-distance limit."
+    bits.push({ weight: 1, text })
+  }
+
+  const maxWaveFt = prefs.maxWaveHeightFt
+  if (isActiveUserMax(maxWaveFt) && ctx.waveHeightM != null && Number.isFinite(ctx.waveHeightM)) {
+    const maxM = maxWaveFt * 0.3048
+    if (maxM > 0) {
+      const r = ctx.waveHeightM / maxM
+      const text =
+        r <= 0.55
+          ? "Waves sit well under your max height."
+          : r <= 0.92
+            ? "Waves stay inside your max height."
+            : "Near your upper wave-height limit."
+      bits.push({ weight: 2, text })
+    }
+  }
+
+  const minWaveFt = prefs.minWaveHeightFt
+  if (isActiveUserMin(minWaveFt) && ctx.waveHeightM != null && Number.isFinite(ctx.waveHeightM)) {
+    const minM = minWaveFt * 0.3048
+    if (ctx.waveHeightM >= minM) bits.push({ weight: 3, text: "Above the minimum size you set." })
+  }
+
+  const maxWindKn = prefs.maxWindSpeedKnots
+  if (isActiveUserMax(maxWindKn) && ctx.windKmh != null && Number.isFinite(ctx.windKmh)) {
+    const kn = toKnots(ctx.windKmh)
+    const text =
+      kn <= maxWindKn * 0.75
+        ? "Wind stays under your speed cap."
+        : kn <= maxWindKn
+          ? "Wind still within your speed cap."
+          : null
+    if (text) bits.push({ weight: 4, text })
+  }
+
+  const minPeriod = prefs.minSwellPeriodSec
+  if (
+    isActiveUserMin(minPeriod) &&
+    ctx.swellPeriodS != null &&
+    Number.isFinite(ctx.swellPeriodS) &&
+    ctx.swellPeriodS >= minPeriod!
+  ) {
+    bits.push({ weight: 5, text: "Swell period clears your minimum." })
+  }
+
+  const spot = getSpotById(ctx.spotId)
+  if (spot) {
+    if (prefs.reefAllowed === false && spot.type !== "reef") {
+      bits.push({
+        weight: 6,
+        text:
+          spot.type === "beach"
+            ? "Beach break fits your no-reef setting."
+            : "Non-reef spot fits your saved preference.",
+      })
+    }
+    if (prefs.sandAllowed === false && spot.type !== "beach") {
+      bits.push({ weight: 6, text: "Matches your preference away from sand beaches." })
+    }
+  }
+
+  if (prefs.notifyStrictness === "strict") {
+    bits.push({ weight: 7, text: "Clears the tighter bar you set for alerts." })
+  }
+
+  const risk = prefs.riskTolerance ?? userCtx.riskTolerance
+  if (risk === "high" && ctx.waveHeightM != null && ctx.waveHeightM >= 1.15) {
+    bits.push({ weight: 8, text: "Enough size for your higher risk tolerance." })
+  } else if (risk === "low" && ctx.waveHeightM != null && ctx.waveHeightM <= 0.85) {
+    bits.push({ weight: 8, text: "Keeps size mellow for your lower risk tolerance." })
+  }
+
+  if (bits.length === 0) return "Lines up with your saved preferences."
+
+  bits.sort((a, b) => a.weight - b.weight)
+  return bits.slice(0, 2).map((b) => b.text.replace(/\.$/, "")).join(" · ") + "."
+}
+
+/** Narrative line + tech line, capped for push delivery */
+function buildPushBody(narrativeLine: string, techLine: string): string {
+  const tech = techLine.trim()
+  const budget = Math.max(48, PUSH_MESSAGE_BODY_MAX - 1 - tech.length)
+  const head = truncate(narrativeLine.trim(), budget)
+  const combined = `${head}\n${tech}`
+  return combined.length <= PUSH_MESSAGE_BODY_MAX ? combined : truncate(combined, PUSH_MESSAGE_BODY_MAX)
+}
+
+function buildConditionsNarrativeSnippet(args: {
+  spotId: string
+  waveHeight?: number
+  swellHeight?: number
+  swellPeriod?: number
+  windSpeed10m?: number
+  windDirection?: number
+}): string {
+  const spot = getSpotById(args.spotId)
+  const ws = args.windSpeed10m
+  const wd = args.windDirection
+  if (!spot || ws == null || !Number.isFinite(ws) || wd == null || !Number.isFinite(wd)) {
+    return "Forecast lines up well for this slot."
+  }
+  const rel = windRelationWord(spot, wd)
+  const str = windStrengthWord(ws)
+  const windPhrase = str === "calm" ? "Almost no wind" : `${str} ${rel} winds`
+
+  const parts: string[] = [windPhrase]
+  if (args.waveHeight != null && Number.isFinite(args.waveHeight)) {
+    parts.push(`${waveSizeWord(args.waveHeight)} surf`)
+  }
+  const swellPhrase = swellShapePhrase(args.swellHeight, args.swellPeriod)
+  if (swellPhrase) parts.push(swellPhrase)
+
+  const concise = parts.slice(0, 2).join(" · ")
+  return concise || "Conditions look workable."
+}
+
 function buildWindowTechLine(state: SurfAgentStateType, chosen: ForecastWindow): string {
   const units = state.user?.rawUser?.units
   return [
@@ -143,24 +330,58 @@ function buildSnappedWindowPushCopy(
   const name = chosen.spotName?.trim() || "this break"
   const timeRange = formatWindowRangeDisplay(chosen.start, chosen.end)
   const lead = formatRelativeLead(chosen.hoursUntilStart)
-  const skill = state.user?.skillLevel ?? "surfer"
-  const travel = chosen.distanceKm != null ? `, about ${Math.round(chosen.distanceKm)} km away` : ""
-  const why = `good match for your ${skill} profile (${lead}${travel})`
+  const travel = chosen.distanceKm != null ? ` · ~${Math.round(chosen.distanceKm)} km` : ""
+  const tod =
+    chosen.timeOfDayLabel != null && String(chosen.timeOfDayLabel).length > 0
+      ? formatTimeOfDayForPrompt(chosen.timeOfDayLabel as TimeOfDayLabel)
+      : null
+  const whenChunk = tod ? `${tod} window (${lead}${travel})` : `${lead}${travel}`
+  const snippet = buildConditionsNarrativeSnippet({
+    spotId: chosen.spotId,
+    waveHeight: chosen.waveHeight,
+    swellHeight: chosen.swellHeight,
+    swellPeriod: chosen.swellPeriod,
+    windSpeed10m: chosen.windSpeed10m,
+    windDirection: chosen.windDirection,
+  })
+  const prefPhrase = buildPreferenceAlignmentPhrase(state, {
+    spotId: chosen.spotId,
+    distanceKm: chosen.distanceKm,
+    waveHeightM: chosen.waveHeight,
+    windKmh: chosen.windSpeed10m,
+    swellPeriodS: chosen.swellPeriod,
+  })
+  const narrative = `${name} — ${whenChunk}. ${snippet} ${prefPhrase}`
   const details = buildWindowTechLine(state, chosen)
-  const title = `Surf ${name} - ${timeRange}`
-  return { title, message: truncate(`${why}\n${details}`, 220) }
+  const title = `Surf ${name} — ${timeRange}`
+  return { title, message: buildPushBody(narrative, details) }
 }
 
 function buildNowPushCopy(state: SurfAgentStateType, spotId: string): { title: string; message: string } {
-  const skill = state.user?.skillLevel ?? "surfer"
   const top = state.topCandidates?.find((c) => c.spotId === spotId)
   const spotName = getSpotName(state, spotId)
-  const travel = top?.distanceKm != null ? `, about ${Math.round(top.distanceKm)} km away` : ""
-  const why = `good match for your ${skill} profile right now${travel}`
+  const travel = top?.distanceKm != null ? ` · ~${Math.round(top.distanceKm)} km` : ""
+  const row = state.hourliesBySpot?.[spotId] as SpotConditions | undefined | null
+  const snippet = buildConditionsNarrativeSnippet({
+    spotId,
+    waveHeight: row?.waveHeight,
+    swellHeight: row?.swellHeight,
+    swellPeriod: row?.swellPeriod,
+    windSpeed10m: row?.windSpeed10m ?? row?.windSpeed,
+    windDirection: row?.windDirection,
+  })
+  const prefPhrase = buildPreferenceAlignmentPhrase(state, {
+    spotId,
+    distanceKm: top?.distanceKm,
+    waveHeightM: row?.waveHeight,
+    windKmh: row?.windSpeed10m ?? row?.windSpeed,
+    swellPeriodS: row?.swellPeriod,
+  })
+  const narrative = `${spotName} — looking good right now${travel}. ${snippet} ${prefPhrase}`
   const details = buildNowTechLine(state, spotId)
   return {
-    title: `Surf ${spotName} - now`,
-    message: truncate(`${why}\n${details}`, 220),
+    title: `Surf ${spotName} — now`,
+    message: buildPushBody(narrative, details),
   }
 }
 
@@ -179,8 +400,7 @@ function computeReasoningNeed(state: SurfAgentStateType, args: {
     : UNSET_MAX_WAVE_HEIGHT_M
   // smaller cap → more nuance; bigger cap → low nuance
   const comfort = clamp01((3 - maxWaveM) / 2)
-  const rawMaxDist = state.user?.rawUser?.preferences?.maxDistanceKm
-  const maxDist = isActiveUserMax(rawMaxDist) ? rawMaxDist : UNSET_MAX_DISTANCE_KM
+  const maxDist = resolvedMaxDistanceKm(state.user?.maxDistanceKm, prefs?.maxDistanceKm) ?? UNSET_MAX_DISTANCE_KM
   const distancePref = clamp01(maxDist / 80)
   const memory = args.memoryConflict ? 1 : 0
   const windows = args.hasWindows ? 1 : 0
@@ -316,7 +536,7 @@ export async function llmDecisionAndExplanation(
     const windowRule = hasWindows
       ? `\nIMPORTANT: Forecast windows exist. Do NOT choose action="decide_now". Choose only action="stop" or action="use_full" so the full window-aware reasoning can decide timing.`
       : ""
-    const tinyPrompt = `Decide whether we should notify a user about surf, without spending many tokens.\n\nCurrent time: ${timeContext}. Mode: ${mode}.\nUser preferences: riskTolerance=${rawPrefs?.riskTolerance ?? "unknown"}, notifyStrictness=${rawPrefs?.notifyStrictness ?? "unknown"}, maxWaveHeightFt=${rawPrefs?.maxWaveHeightFt ?? "unknown"}, maxDistanceKm=${state.user?.maxDistanceKm ?? "unknown"}.${userNoteLine}\n\nDeterministic scoring summary:\n- top1 suitability: ${top1?.userSuitability ?? 0}\n- top2 suitability: ${top2?.userSuitability ?? 0}\n- lead (top1-top2): ${Number.isFinite(lead) ? lead.toFixed(1) : "n/a"}\n- has forecast windows: ${windows.length > 0}\n- recently notified top1 spot: ${memoryConflict}\n\nValid spotIds: ${validSpotIds.join(", ")}\n\nReturn:\n- action="stop" if we should not notify.\n- action="decide_now" if notifying now is straightforward; include spotId.\n- action="use_full" if we need the full candidate/window context to choose well.${windowRule}\n\nKeep rationale short and non-technical.`
+    const tinyPrompt = `Decide whether we should notify a user about surf, without spending many tokens.\n\nCurrent time: ${timeContext}. Mode: ${mode}.\nUser preferences (saved): ${formatLlmPrefsSummary(state)}.${userNoteLine}\n\nDeterministic scoring summary:\n- top1 suitability: ${top1?.userSuitability ?? 0}\n- top2 suitability: ${top2?.userSuitability ?? 0}\n- lead (top1-top2): ${Number.isFinite(lead) ? lead.toFixed(1) : "n/a"}\n- has forecast windows: ${windows.length > 0}\n- recently notified top1 spot: ${memoryConflict}\n\nValid spotIds: ${validSpotIds.join(", ")}\n\nReturn:\n- action="stop" if we should not notify.\n- action="decide_now" if notifying now is straightforward; include spotId.\n- action="use_full" if we need the full candidate/window context to choose well.${windowRule}\n\nKeep rationale short and non-technical.`
 
     const gate = await tiny.invoke(tinyPrompt)
     if (gate.action === "stop") {
@@ -385,7 +605,8 @@ ${windowSpotIds.join(", ")}`
 
 ${SURF_INTERPRETATION_GUIDE}
 
-User skill: ${skill}. Mode: ${mode}. Current time: ${timeContext}.${lastNotifsText}${userNoteLine}
+User skill: ${skill}. Mode: ${mode}. Current time: ${timeContext}.
+User preferences (saved): ${formatLlmPrefsSummary(state)}.${lastNotifsText}${userNoteLine}
 
 The candidate and window scores below were computed deterministically from surf conditions (wave height, period, wind, etc.).
 

@@ -96,10 +96,14 @@ export function interpretConditions(
         hazards.push("Onshore wind")
       }
 
-      // Clamp and round
+      const riskTol = user.preferences?.riskTolerance ?? "medium"
+      if (riskTol === "low" && wh > 1.6) {
+        adjustedScore *= 0.93
+        if (wh > 2.2) hazards.push("Chunky waves for a low-risk preference")
+      }
+
       envQualityScoreNow = Math.max(0, Math.min(10, Math.round(adjustedScore * 10) / 10))
 
-      if (wh > 2.5 && user.skill === "beginner") hazards.push("Wave height high for beginners")
       if (wh > 2.5 && user.skill === "beginner") hazards.push("Wave height high for beginners")
     } else {
       nowText = "No live conditions."

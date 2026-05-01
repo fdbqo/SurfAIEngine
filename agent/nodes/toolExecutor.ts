@@ -1,5 +1,6 @@
 import type { SurfAgentStateType } from "../state"
 import { agentConfig } from "../config"
+import { buildPreferredBreaks } from "../utils/preferredBreaks"
 import { getLocationForDistance } from "../state"
 import { appendRunLog } from "../utils/runLog"
 import { getUserForAgent } from "@/lib/db/userForAgent"
@@ -8,7 +9,6 @@ import { getAllSpotsWithDistance } from "@/lib/shared/spots/nearby"
 import type { SpotConditions } from "@/lib/shared/types"
 import { getConditionsForSpots } from "@/lib/db/services/spotConditionsService"
 import { FALLBACK_LOCATION } from "@/lib/shared/defaults"
-import type { AgentUserContext } from "../state"
 import { isActiveUserMax } from "@/lib/shared/preferenceBounds"
 
 export async function toolExecutorNode(
@@ -21,6 +21,7 @@ export async function toolExecutorNode(
     const user = await getUserForAgent(state.userId)
     if (!user) return { user: null, pendingToolCall: null, runLog: appendRunLog(state, "toolExecutor") }
     const prefs = user.preferences
+    const { quietStart, quietEnd } = agentConfig.loadUserContext
     return {
       pendingToolCall: null,
       runLog: appendRunLog(state, "toolExecutor", { tool: "get_user_preferences" }),
@@ -29,16 +30,10 @@ export async function toolExecutorNode(
         usualLocation: user.usualLocation ? { lat: user.usualLocation.lat, lon: user.usualLocation.lon } : undefined,
         currentLocation: user.lastLocation ? { lat: user.lastLocation.lat, lon: user.lastLocation.lon } : undefined,
         maxDistanceKm: isActiveUserMax(prefs?.maxDistanceKm) ? prefs.maxDistanceKm : undefined,
-        preferredBreaks: (prefs
-          ? ([
-              prefs.sandAllowed !== false && "beach",
-              prefs.reefAllowed !== false && "reef",
-              "point",
-              "bay",
-            ].filter(Boolean) as Array<"beach" | "reef" | "point" | "bay">)
-          : ["beach", "reef", "point", "bay"]) as AgentUserContext["preferredBreaks"],
+        preferredBreaks: buildPreferredBreaks(prefs),
         riskTolerance: prefs?.riskTolerance ?? "low",
         notifyThreshold: prefs?.notifyStrictness === "strict" ? "great" : "good",
+        quietHours: { start: quietStart, end: quietEnd },
         favorites: [],
         rawUser: user,
       },

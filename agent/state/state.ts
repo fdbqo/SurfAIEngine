@@ -13,7 +13,8 @@ export type AgentUserContext = {
   /** latest location */
   currentLocation?: { lat: number; lon: number }
   maxDistanceKm?: number
-  preferredBreaks?: Array<"beach" | "reef" | "point" | "bay" | "harbour" | "island">
+  /** Matches {@link Spot.type} in the spots catalog */
+  preferredBreaks?: Spot["type"][]
   riskTolerance?: "low" | "medium" | "high"
   notifyThreshold?: "good" | "great"
   quietHours?: { start: string; end: string }

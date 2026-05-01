@@ -622,7 +622,7 @@ export async function runAgentAndMaybeNotify(input: { userId: string; mode: "LIV
   // strip internal scoring text from push body
   const rawBody = decision?.message ? String(decision.message) : ""
   const sanitized = sanitizeNotificationBody(rawBody)
-  const body = truncate(sanitized || "Surf looks worth a session.", 200)
+  const body = truncate(sanitized || "Surf looks worth a session.", 240)
   const url = "/"
 
   const dedupeKey = buildDedupeKey({ userId: input.userId, mode: input.mode, spotId: decision?.spotId })
