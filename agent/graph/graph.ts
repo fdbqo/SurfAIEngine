@@ -16,6 +16,7 @@ import { prepareRetry, shouldRetryLlm } from "../nodes/prepareRetry"
 import { applyReject } from "../nodes/applyReject"
 import { notificationGuard } from "../nodes/notificationGuard"
 import { outputDecision } from "../nodes/outputDecision"
+import { sanitizeLastNotificationsInput } from "@/lib/shared/spotIdInput"
 
 export type SurfGraphInput = {
   userId: string
@@ -85,10 +86,11 @@ export function getSurfAgentGraph() {
 
 export async function runSurfAgent(input: SurfGraphInput) {
   const graph = getSurfAgentGraph()
+  const lastNotifications = sanitizeLastNotificationsInput(input.lastNotifications ?? [])
   const result = await graph.invoke({
     userId: input.userId,
     mode: input.mode,
-    lastNotifications: input.lastNotifications ?? [],
+    lastNotifications,
     runLog: [],
   })
   return result

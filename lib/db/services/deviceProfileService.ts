@@ -18,7 +18,7 @@ export type UpsertDeviceProfileInput = {
   usualRegions?: string[]
 }
 
-function normalizeUpsert(
+function normaliseUpsert(
   input: UpsertDeviceProfileInput
 ): Partial<IDeviceProfile> & { deviceId: string; userId: string; preferences: Record<string, unknown> } {
   const lastLoc = input.lastLocation ? coerceLastLocation(input.lastLocation) : undefined
@@ -49,7 +49,7 @@ function normalizeUpsert(
 
 export async function upsertDeviceProfile(input: UpsertDeviceProfileInput): Promise<IDeviceProfile> {
   await connectDB()
-  const n = normalizeUpsert(input)
+  const n = normaliseUpsert(input)
   const doc = await DeviceProfileModel.findOneAndUpdate(
     { deviceId: n.deviceId },
     { $set: n },

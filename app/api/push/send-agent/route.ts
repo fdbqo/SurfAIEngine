@@ -1,13 +1,18 @@
 import { NextResponse } from "next/server"
 import { z } from "zod"
 import { runAgentAndMaybeNotify } from "@/lib/notifications/notifications"
+import { sanitizeLastNotificationsInput } from "@/lib/shared/spotIdInput"
 
 export const runtime = "nodejs"
 
 const BodySchema = z.object({
   userId: z.string().min(1).max(200).optional().default("test-user-1"),
   mode: z.enum(["LIVE_NOTIFY", "FORECAST_PLANNER"]).optional().default("FORECAST_PLANNER"),
-  lastNotifications: z.array(z.object({ spotId: z.string(), timestamp: z.string() })).optional().default([]),
+  lastNotifications: z
+    .array(z.object({ spotId: z.string(), timestamp: z.string() }))
+    .optional()
+    .default([])
+    .transform(sanitizeLastNotificationsInput),
 })
 
 function requireEnv(name: string): string {

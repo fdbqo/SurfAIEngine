@@ -10,6 +10,7 @@ import type { SpotConditions } from "@/lib/shared/types"
 import { getConditionsForSpots } from "@/lib/db/services/spotConditionsService"
 import { FALLBACK_LOCATION } from "@/lib/shared/defaults"
 import { isActiveUserMax } from "@/lib/shared/preferenceBounds"
+import { intersectConditionsSpotIds } from "@/lib/shared/spotIdInput"
 
 export async function toolExecutorNode(
   state: SurfAgentStateType
@@ -92,7 +93,12 @@ export async function toolExecutorNode(
   }
 
   if (call.tool === "get_surf_conditions_batch") {
-    const spotIds = (Array.isArray(call.args.spotIds) ? call.args.spotIds.map(String) : state.spotIds ?? []) as string[]
+    const catalogSpotIds = new Set(allSpots.map((s) => s.id))
+    const spotIds = intersectConditionsSpotIds({
+      requestedRaw: call.args.spotIds,
+      plannedSpotIdsRaw: state.spotIds ?? [],
+      catalogSpotIds,
+    })
     if (!spotIds.length) return { pendingToolCall: null, runLog: appendRunLog(state, "toolExecutor") }
 
     const results = await getConditionsForSpots(spotIds)

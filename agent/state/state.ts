@@ -5,7 +5,7 @@ import type { Spot } from "@/lib/shared/spots"
 
 export type AgentMode = "LIVE_NOTIFY" | "FORECAST_PLANNER"
 
-// normalized user context
+// normalised user context
 export type AgentUserContext = {
   skillLevel: "beginner" | "intermediate" | "advanced"
   /** saved home location */

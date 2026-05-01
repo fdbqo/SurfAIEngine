@@ -19,6 +19,7 @@ import { getSpotById, type Spot } from "@/lib/shared/spots"
 import { formatTimeOfDayForPrompt, type TimeOfDayLabel } from "../utils/notificationContext"
 import { resolvedMaxDistanceKm } from "../utils/preferenceRanking"
 import { formatLlmPrefsSummary } from "../utils/preferencePrompt"
+import { normaliseExternalSpotId } from "@/lib/shared/spotIdInput"
 
 /** aligns with Expo/Web Push practical limits after sanitization (two lines) */
 const PUSH_MESSAGE_BODY_MAX = 240
@@ -26,6 +27,11 @@ const PUSH_MESSAGE_BODY_MAX = 240
 function truncate(s: string, max: number): string {
   if (s.length <= max) return s
   return s.slice(0, max - 3) + "..."
+}
+
+/** Same rules as external APIs: trim + 24-char hex only (structured enum already constrains values). */
+function normaliseLlmSpotId(spotId: string | null | undefined): string | undefined {
+  return normaliseExternalSpotId(spotId)
 }
 
 function clamp01(n: number): number {
@@ -86,7 +92,7 @@ function toFeet(meters: number): number {
   return meters * 3.28084
 }
 
-function normalizeWindUnit(raw: string | undefined): "kmh" | "kn" | "mph" | "ms" {
+function normaliseWindUnit(raw: string | undefined): "kmh" | "kn" | "mph" | "ms" {
   const v = String(raw ?? "").toLowerCase().trim()
   if (v.includes("knot") || v === "kn" || v === "kts") return "kn"
   if (v.includes("mph")) return "mph"
@@ -96,7 +102,7 @@ function normalizeWindUnit(raw: string | undefined): "kmh" | "kn" | "mph" | "ms"
 
 function formatWindSpeed(kmh: number | undefined, unitRaw: string | undefined): string {
   if (kmh == null || !Number.isFinite(kmh)) return "n/a"
-  const unit = normalizeWindUnit(unitRaw)
+  const unit = normaliseWindUnit(unitRaw)
   if (unit === "kn") return `${Math.round(toKnots(kmh))} kn`
   if (unit === "mph") return `${Math.round(toMph(kmh))} mph`
   if (unit === "ms") return `${toMs(kmh).toFixed(1)} m/s`
@@ -570,24 +576,37 @@ function computeReasoningNeed(state: SurfAgentStateType, args: {
   return clamp01(r)
 }
 
-const DecisionSchema = z.object({
-  notify: z.boolean(),
-  spotId: z.string().nullable(),
-  when: z.enum(["now", "window"]).nullable(),
-  windowStart: z.string().nullable(),
-  windowEnd: z.string().nullable(),
-  title: z.string().nullable(),
-  message: z.string().nullable(),
-  rationale: z.string().nullable(),
-  whyNotOthers: z.array(z.string()).nullable(),
-  confidence: z.number().min(0).max(1).nullable(),
-})
+/** Constrain spotId at parse time so the model cannot emit invented / corrupted hex strings. */
+function spotIdSchemaForLlm(allowedSpotIds: readonly string[]) {
+  const uniq = [
+    ...new Set(allowedSpotIds.filter((id) => typeof id === "string" && id.trim().length > 0)),
+  ]
+  if (uniq.length === 0) return z.string().nullable()
+  return z.enum(uniq as [string, ...string[]]).nullable()
+}
 
-const TinyGateSchema = z.object({
-  action: z.enum(["stop", "decide_now", "use_full"]),
-  spotId: z.string().nullable(),
-  rationale: z.string().nullable(),
-})
+function buildDecisionSchema(allowedSpotIds: readonly string[]) {
+  return z.object({
+    notify: z.boolean(),
+    spotId: spotIdSchemaForLlm(allowedSpotIds),
+    when: z.enum(["now", "window"]).nullable(),
+    windowStart: z.string().nullable(),
+    windowEnd: z.string().nullable(),
+    title: z.string().nullable(),
+    message: z.string().nullable(),
+    rationale: z.string().nullable(),
+    whyNotOthers: z.array(z.string()).nullable(),
+    confidence: z.number().min(0).max(1).nullable(),
+  })
+}
+
+function buildTinyGateSchema(allowedSpotIds: readonly string[]) {
+  return z.object({
+    action: z.enum(["stop", "decide_now", "use_full"]),
+    spotId: spotIdSchemaForLlm(allowedSpotIds),
+    rationale: z.string().nullable(),
+  })
+}
 
 export async function llmDecisionAndExplanation(
   state: SurfAgentStateType
@@ -675,7 +694,8 @@ export async function llmDecisionAndExplanation(
   // jump to full prompt when reasoning need is high
   if (tradeoffNeeded && reasoningNeed < agentConfig.reasoning.budget.high) {
     const tinyLlm = new ChatOpenAI({ model: "gpt-4o-mini", temperature: 0.2 })
-    const tiny = tinyLlm.withStructuredOutput(TinyGateSchema)
+    const tinyGateAllowlist = [...new Set(validSpotIds)]
+    const tiny = tinyLlm.withStructuredOutput(buildTinyGateSchema(tinyGateAllowlist))
 
     const hasWindows = mode === "FORECAST_PLANNER" && windows.length > 0
     const windowRule = hasWindows
@@ -692,15 +712,16 @@ export async function llmDecisionAndExplanation(
       }
       return { decision }
     }
+    const gatedSpotId = normaliseLlmSpotId(gate.spotId)
     if (
       gate.action === "decide_now" &&
       !(mode === "FORECAST_PLANNER" && windows.length > 0) &&
       !(mode === "FORECAST_PLANNER" && blockNowForForecast) &&
-      gate.spotId &&
-      validSpotIds.includes(gate.spotId) &&
-      (mode !== "FORECAST_PLANNER" || isPlausibleNowForForecast(state, gate.spotId))
+      gatedSpotId &&
+      validSpotIds.includes(gatedSpotId) &&
+      (mode !== "FORECAST_PLANNER" || isPlausibleNowForForecast(state, gatedSpotId))
     ) {
-      const chosen = candidates.find((c) => c.spotId === gate.spotId)
+      const chosen = candidates.find((c) => c.spotId === gatedSpotId)
       const spotLabel = chosen?.summary
         ? chosen.summary.split(",")[0]?.replace(/^Spot:\s*/i, "")?.trim()
         : undefined
@@ -708,7 +729,7 @@ export async function llmDecisionAndExplanation(
         chosen?.distanceKm != null ? ` about ${Math.round(chosen.distanceKm)}km away` : ""
       const decision: AgentDecision = {
         notify: true,
-        spotId: gate.spotId,
+        spotId: gatedSpotId,
         when: "now",
         title: spotLabel ? `Surf looks best at ${spotLabel}` : "Surf looks best right now",
         message: spotLabel
@@ -725,7 +746,6 @@ export async function llmDecisionAndExplanation(
   }
 
   const llm = new ChatOpenAI({ model: "gpt-4o-mini", temperature: 0.2 })
-  const structured = llm.withStructuredOutput(DecisionSchema)
 
   const maxChars = agentConfig.prompt.summaryMaxChars
   const windowsSorted =
@@ -733,6 +753,8 @@ export async function llmDecisionAndExplanation(
       ? [...windows].sort((a, b) => b.userSuitability - a.userSuitability)
       : windows
   const windowSpotIds = [...new Set(windowsSorted.map((w) => w.spotId))]
+  const structuredSpotAllowlist = [...new Set([...validSpotIds, ...windowSpotIds])]
+  const structured = llm.withStructuredOutput(buildDecisionSchema(structuredSpotAllowlist))
   const windowsSection =
     mode === "FORECAST_PLANNER" && windowsSorted.length
       ? `
@@ -759,8 +781,18 @@ User preferences (saved): ${formatLlmPrefsSummary(state)}.${lastNotifsText}${use
 
 The candidate and window scores below were computed deterministically from surf conditions (wave height, period, wind, etc.).
 
-Valid spotIds (you MUST set spotId to one of these exact strings when notifying; do NOT use the spot name):
+${
+  windowsSorted.length > 0
+    ? `Window-eligible spotIds (when="window" ONLY — copy exactly from this list; each id has at least one row under Upcoming windows):
+${windowSpotIds.join(", ")}
+
+Live-candidate spotIds (when="now" ONLY — copy exactly from this list):
 ${validSpotIds.join(", ")}
+`
+    : `Valid spotIds (when notifying; copy exactly; do NOT use the spot name):
+${validSpotIds.join(", ")}
+`
+}
 
 Top candidates (use only this data; do not invent):
 ${candidates.map((c) => `- ${truncate(c.summary, maxChars)}`).join("\n")}
@@ -795,7 +827,7 @@ Return only structured fields. For dates, use ISO strings for windowStart/window
   const raw = await structured.invoke(prompt)
   const decision: AgentDecision = {
     notify: raw.notify,
-    spotId: raw.spotId ?? undefined,
+    spotId: normaliseLlmSpotId(raw.spotId),
     when: raw.when === "window" ? "next_window" : (raw.when ?? "now"),
     windowStart: raw.windowStart ? new Date(raw.windowStart) : undefined,
     windowEnd: raw.windowEnd ? new Date(raw.windowEnd) : undefined,
@@ -809,7 +841,24 @@ Return only structured fields. For dates, use ISO strings for windowStart/window
   // snap chosen window to a real computed row
   // avoids invented times
   if (decision.notify && decision.when === "next_window") {
-    const windowsForSpot = (state.forecastWindows ?? []).filter((w) => w.spotId === decision.spotId)
+    const allWindows = state.forecastWindows ?? []
+    let windowsForSpot = allWindows.filter((w) => w.spotId === decision.spotId)
+
+    // Model might pick a top candidate that has no surviving forecast rows (trimming/filters) or a padded/wrong id.
+    // Recover: (1) best window among top candidates ∩ forecast list; (2) else best window globally (still deterministic).
+    if (windowsForSpot.length === 0) {
+      const candidateIds = new Set(candidates.map((c) => c.spotId))
+      let recoverPool = allWindows.filter((w) => candidateIds.has(w.spotId))
+      if (recoverPool.length === 0 && allWindows.length > 0) {
+        recoverPool = [...allWindows]
+      }
+      if (recoverPool.length > 0) {
+        const best = [...recoverPool].sort((a, b) => b.userSuitability - a.userSuitability)[0]
+        decision.spotId = best.spotId
+        windowsForSpot = allWindows.filter((w) => w.spotId === decision.spotId)
+      }
+    }
+
     if (windowsForSpot.length === 0) {
       decision.notify = false
       decision.spotId = undefined
@@ -818,9 +867,13 @@ Return only structured fields. For dates, use ISO strings for windowStart/window
       decision.windowEnd = undefined
       decision.title = undefined
       decision.message =
-        "We could not match that choice to a forecast window in our data, so no notification is sent."
+        allWindows.length === 0
+          ? "No forecast windows are available right now, so no notification is sent."
+          : "We could not match that choice to a forecast window in our data, so no notification is sent."
       decision.rationale =
-        "The model picked a window timing that is not in the computed forecast list for that spot, or the spot has no window rows. Prefer when=window only for spotIds listed under upcoming windows."
+        allWindows.length === 0
+          ? "The forecast window list was empty for this run—nothing to snap the recommendation to."
+          : "No overlapping forecast rows could be resolved after validating spotId and recovery candidates."
       decision.whyNotOthers = undefined
     } else {
       const exact =
@@ -874,12 +927,17 @@ Return only structured fields. For dates, use ISO strings for windowStart/window
   const afterNoNow = applyForecastPlannerNoNowOverride(state, decision, now)
   if (afterNoNow.notify && afterNoNow.spotId) {
     if (afterNoNow.when === "next_window" && afterNoNow.windowStart) {
-      const chosen = (state.forecastWindows ?? []).find(
-        (w) =>
-          w.spotId === afterNoNow.spotId &&
-          w.start.getTime() === afterNoNow.windowStart!.getTime(),
-      )
+      const rows = (state.forecastWindows ?? []).filter((w) => w.spotId === afterNoNow.spotId)
+      let chosen =
+        rows.find((w) => w.start.getTime() === afterNoNow.windowStart!.getTime()) ??
+        rows.sort((a, b) => b.userSuitability - a.userSuitability)[0]
+      if (!chosen && (state.forecastWindows ?? []).length > 0) {
+        chosen = [...(state.forecastWindows ?? [])].sort((a, b) => b.userSuitability - a.userSuitability)[0]
+        afterNoNow.spotId = chosen.spotId
+      }
       if (chosen) {
+        afterNoNow.windowStart = chosen.start
+        afterNoNow.windowEnd = chosen.end
         const copy = buildSnappedWindowPushCopy(state, chosen)
         afterNoNow.title = copy.title
         afterNoNow.message = copy.message

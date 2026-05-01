@@ -3,6 +3,7 @@ import { z } from "zod"
 import { runSurfAgent } from "@/agent"
 import type { AgentDecision, AgentReview, NotificationGuardResult } from "@/agent"
 import type { ScoredSpot, CandidateSummary, RunLogEntry } from "@/agent/state"
+import { sanitizeLastNotificationsInput } from "@/lib/shared/spotIdInput"
 
 export const maxDuration = 60
 
@@ -12,7 +13,8 @@ const RunGraphBodySchema = z.object({
   lastNotifications: z
     .array(z.object({ spotId: z.string(), timestamp: z.string() }))
     .optional()
-    .default([]),
+    .default([])
+    .transform(sanitizeLastNotificationsInput),
 })
 
 export type RunGraphResponse = {
