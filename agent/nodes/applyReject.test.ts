@@ -30,6 +30,6 @@ describe("applyReject", () => {
     expect(out.decision?.title).toBeUndefined()
     expect(out.decision?.whyNotOthers).toBeUndefined()
     expect(out.decision?.confidence).toBeUndefined()
-    expect(out.decision?.message).toBe("Window selected")
+    expect(out.decision?.message).toBe("bad")
   })
 })

@@ -12,7 +12,9 @@ export function applyReject(state: SurfAgentStateType): Partial<SurfAgentStateTy
     windowStart: undefined,
     windowEnd: undefined,
     title: undefined,
-    message: decision?.message ?? fallbackMessage,
+    // When we reject, we shouldn't keep the previous push copy in `message` because it can
+    // look like something was actually sent. Keep the issues string for debugging instead.
+    message: fallbackMessage,
     rationale: decision?.rationale,
     whyNotOthers: undefined,
     confidence: undefined,

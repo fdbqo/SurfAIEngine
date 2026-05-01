@@ -151,6 +151,127 @@ function swellShapePhrase(heightM: number | undefined, periodS: number | undefin
   return "powerful, lined-up swell"
 }
 
+/** Plain language for lock-screen copy (not scoring jargon). */
+function waveSizePlainEnglish(meters: number): string {
+  if (meters < 0.35) return "tiny waves"
+  if (meters < 0.85) return "small waves"
+  if (meters < 1.75) return "fun-sized waves"
+  return "solid waves"
+}
+
+/** One short sentence: wind + size. Numbers stay on the second line. */
+function buildPushPlainVibe(args: {
+  spotId: string
+  waveHeight?: number
+  windSpeed10m?: number
+  windDirection?: number
+}): string {
+  const spot = getSpotById(args.spotId)
+  const ws = args.windSpeed10m
+  const wd = args.windDirection
+  if (!spot || ws == null || !Number.isFinite(ws) || wd == null || !Number.isFinite(wd)) {
+    return "Forecast looks reasonable for this slot."
+  }
+  const rel = windRelationWord(spot, wd)
+  const str = windStrengthWord(ws)
+  const windBit =
+    str === "calm"
+      ? "Calm conditions"
+      : `${str === "light" ? "Light" : str === "moderate" ? "Moderate" : "Strong"} ${rel} wind`
+  const wh = args.waveHeight
+  if (wh != null && Number.isFinite(wh)) {
+    return `${windBit} and ${waveSizePlainEnglish(wh)}.`
+  }
+  return `${windBit}.`
+}
+
+/**
+ * At most one short hook for pushes — avoids stacking jargon on the lock screen.
+ */
+function buildPushPreferenceHook(
+  state: SurfAgentStateType,
+  ctx: {
+    spotId: string
+    distanceKm?: number
+    waveHeightM?: number
+    windKmh?: number
+    swellPeriodS?: number
+  },
+): string {
+  const userCtx = state.user
+  const prefs = userCtx?.rawUser?.preferences
+  if (!userCtx || !prefs) return ""
+
+  const maxDist = userCtx.maxDistanceKm
+  if (isActiveUserMax(maxDist) && ctx.distanceKm != null && Number.isFinite(ctx.distanceKm) && maxDist! > 0) {
+    const r = ctx.distanceKm / maxDist!
+    if (r <= 0.45) return "An easy drive versus your max distance."
+    if (r <= 0.85) return "Within the distance you allow."
+    return "Toward the long end of your distance setting."
+  }
+
+  const maxWaveFt = prefs.maxWaveHeightFt
+  if (isActiveUserMax(maxWaveFt) && ctx.waveHeightM != null && Number.isFinite(ctx.waveHeightM)) {
+    const maxM = maxWaveFt * 0.3048
+    if (maxM > 0) {
+      const r = ctx.waveHeightM / maxM
+      if (r <= 0.92) return "Height stays inside your limit."
+      return "Near the top of your height comfort zone."
+    }
+  }
+
+  const minWaveFt = prefs.minWaveHeightFt
+  if (isActiveUserMin(minWaveFt) && ctx.waveHeightM != null && Number.isFinite(ctx.waveHeightM)) {
+    const minM = minWaveFt * 0.3048
+    if (ctx.waveHeightM >= minM) return "Meets the smallest size you asked for."
+  }
+
+  const maxWindKn = prefs.maxWindSpeedKnots
+  if (isActiveUserMax(maxWindKn) && ctx.windKmh != null && Number.isFinite(ctx.windKmh)) {
+    const kn = toKnots(ctx.windKmh)
+    if (kn <= maxWindKn) return "Wind stays inside your cap."
+  }
+
+  const minPeriod = prefs.minSwellPeriodSec
+  if (
+    isActiveUserMin(minPeriod) &&
+    ctx.swellPeriodS != null &&
+    Number.isFinite(ctx.swellPeriodS) &&
+    ctx.swellPeriodS >= minPeriod!
+  ) {
+    return "Period clears your minimum."
+  }
+
+  const spot = getSpotById(ctx.spotId)
+  if (spot) {
+    if (prefs.reefAllowed === false && spot.type !== "reef") {
+      return spot.type === "beach" ? "Beach break — matches your no-reef preference." : "Non-reef — matches your preference."
+    }
+    if (prefs.sandAllowed === false && spot.type !== "beach") {
+      return "Away from sand beaches, as you prefer."
+    }
+  }
+
+  if (prefs.notifyStrictness === "strict") {
+    return "Passes your stricter alert bar."
+  }
+
+  const risk = prefs.riskTolerance ?? userCtx.riskTolerance
+  if (risk === "high" && ctx.waveHeightM != null && ctx.waveHeightM >= 1.15) {
+    return "Solid energy if you like bigger days."
+  }
+  if (risk === "low" && ctx.waveHeightM != null && ctx.waveHeightM <= 0.85) {
+    return "Keeps things on the mellow side for you."
+  }
+
+  return ""
+}
+
+function joinPushSentences(parts: string[]): string {
+  const cleaned = parts.map((p) => p.trim()).filter(Boolean)
+  return cleaned.join(" ")
+}
+
 /**
  * Short clauses comparing this window / moment to saved prefs (distance, wave min/max, wind,
  * swell period, break-type toggles, notify strictness, risk). No generic skill-only closer.
@@ -301,9 +422,9 @@ function buildConditionsNarrativeSnippet(args: {
 function buildWindowTechLine(state: SurfAgentStateType, chosen: ForecastWindow): string {
   const units = state.user?.rawUser?.units
   return [
-    `waves ${formatWaveHeight(chosen.waveHeight, units?.waveHeight)}`,
-    `swell ${formatWaveHeight(chosen.swellHeight, units?.waveHeight)} @ ${chosen.swellPeriod?.toFixed(1) ?? "n/a"}s`,
-    `wind ${formatWindSpeed(chosen.windSpeed10m, units?.windSpeed)}`,
+    `~${formatWaveHeight(chosen.waveHeight, units?.waveHeight)} waves`,
+    `~${chosen.swellPeriod?.toFixed(1) ?? "n/a"}s swell`,
+    `${formatWindSpeed(chosen.windSpeed10m, units?.windSpeed)} wind`,
   ].join(" · ")
 }
 
@@ -311,9 +432,9 @@ function buildNowTechLine(state: SurfAgentStateType, spotId: string): string {
   const units = state.user?.rawUser?.units
   const row = state.hourliesBySpot?.[spotId] as SpotConditions | undefined | null
   return [
-    `waves ${formatWaveHeight(row?.waveHeight, units?.waveHeight)}`,
-    `swell ${formatWaveHeight(row?.swellHeight, units?.waveHeight)} @ ${row?.swellPeriod?.toFixed(1) ?? "n/a"}s`,
-    `wind ${formatWindSpeed(row?.windSpeed10m ?? row?.windSpeed, units?.windSpeed)}`,
+    `~${formatWaveHeight(row?.waveHeight, units?.waveHeight)} waves`,
+    `~${row?.swellPeriod?.toFixed(1) ?? "n/a"}s swell`,
+    `${formatWindSpeed(row?.windSpeed10m ?? row?.windSpeed, units?.windSpeed)} wind`,
   ].join(" · ")
 }
 
@@ -324,28 +445,28 @@ function buildSnappedWindowPushCopy(
   const name = chosen.spotName?.trim() || "this break"
   const timeRange = formatWindowRangeDisplay(chosen.start, chosen.end)
   const lead = formatRelativeLead(chosen.hoursUntilStart)
-  const travel = chosen.distanceKm != null ? ` · ~${Math.round(chosen.distanceKm)} km` : ""
+  const distRound = chosen.distanceKm != null ? Math.round(chosen.distanceKm) : null
+  const distBit = distRound != null ? `~${distRound} km` : null
   const tod =
     chosen.timeOfDayLabel != null && String(chosen.timeOfDayLabel).length > 0
       ? formatTimeOfDayForPrompt(chosen.timeOfDayLabel as TimeOfDayLabel)
       : null
-  const whenChunk = tod ? `${tod} window (${lead}${travel})` : `${lead}${travel}`
-  const snippet = buildConditionsNarrativeSnippet({
+  const whenParts = [tod, distBit, lead].filter(Boolean) as string[]
+  const whenChunk = whenParts.join(" · ")
+  const vibe = buildPushPlainVibe({
     spotId: chosen.spotId,
     waveHeight: chosen.waveHeight,
-    swellHeight: chosen.swellHeight,
-    swellPeriod: chosen.swellPeriod,
     windSpeed10m: chosen.windSpeed10m,
     windDirection: chosen.windDirection,
   })
-  const prefPhrase = buildPreferenceAlignmentPhrase(state, {
+  const hook = buildPushPreferenceHook(state, {
     spotId: chosen.spotId,
     distanceKm: chosen.distanceKm,
     waveHeightM: chosen.waveHeight,
     windKmh: chosen.windSpeed10m,
     swellPeriodS: chosen.swellPeriod,
   })
-  const narrative = `${name} — ${whenChunk}. ${snippet} ${prefPhrase}`
+  const narrative = joinPushSentences([`${name} — ${whenChunk}.`, vibe, hook])
   const details = buildWindowTechLine(state, chosen)
   const title = `Surf ${name} — ${timeRange}`
   return { title, message: buildPushBody(narrative, details) }
@@ -354,29 +475,73 @@ function buildSnappedWindowPushCopy(
 function buildNowPushCopy(state: SurfAgentStateType, spotId: string): { title: string; message: string } {
   const top = state.topCandidates?.find((c) => c.spotId === spotId)
   const spotName = getSpotName(state, spotId)
-  const travel = top?.distanceKm != null ? ` · ~${Math.round(top.distanceKm)} km` : ""
+  const distRound = top?.distanceKm != null ? Math.round(top.distanceKm) : null
+  const distBit = distRound != null ? `~${distRound} km` : null
   const row = state.hourliesBySpot?.[spotId] as SpotConditions | undefined | null
-  const snippet = buildConditionsNarrativeSnippet({
+  const leadParts = ["now", distBit].filter(Boolean) as string[]
+  const whenChunk = leadParts.join(" · ")
+  const vibe = buildPushPlainVibe({
     spotId,
     waveHeight: row?.waveHeight,
-    swellHeight: row?.swellHeight,
-    swellPeriod: row?.swellPeriod,
     windSpeed10m: row?.windSpeed10m ?? row?.windSpeed,
     windDirection: row?.windDirection,
   })
-  const prefPhrase = buildPreferenceAlignmentPhrase(state, {
+  const hook = buildPushPreferenceHook(state, {
     spotId,
     distanceKm: top?.distanceKm,
     waveHeightM: row?.waveHeight,
     windKmh: row?.windSpeed10m ?? row?.windSpeed,
     swellPeriodS: row?.swellPeriod,
   })
-  const narrative = `${spotName} — looking good right now${travel}. ${snippet} ${prefPhrase}`
+  const narrative = joinPushSentences([`${spotName} — ${whenChunk}.`, vibe, hook])
   const details = buildNowTechLine(state, spotId)
   return {
     title: `Surf ${spotName} — now`,
     message: buildPushBody(narrative, details),
   }
+}
+
+function buildAlignedRationale(state: SurfAgentStateType, decision: AgentDecision): string | undefined {
+  if (!decision.notify || !decision.spotId) return decision.rationale
+
+  const prefs = state.user?.rawUser?.preferences
+  const strictText = prefs?.notifyStrictness === "strict" ? " (strict alerts)" : ""
+  const spotId = decision.spotId
+  const spotName = getSpotName(state, spotId)
+
+  if (decision.when === "next_window" && decision.windowStart) {
+    const chosen = (state.forecastWindows ?? []).find(
+      (w) => w.spotId === spotId && w.start.getTime() === decision.windowStart!.getTime(),
+    )
+    const lead = chosen?.hoursUntilStart != null ? formatRelativeLead(chosen.hoursUntilStart) : "upcoming"
+    const tod =
+      chosen?.timeOfDayLabel != null && String(chosen.timeOfDayLabel).length > 0
+        ? formatTimeOfDayForPrompt(chosen.timeOfDayLabel as TimeOfDayLabel)
+        : null
+    const whenText = tod ? `${tod} window (${lead})` : `${lead} window`
+    const prefPhrase = buildPreferenceAlignmentPhrase(state, {
+      spotId,
+      distanceKm: chosen?.distanceKm,
+      waveHeightM: chosen?.waveHeight,
+      windKmh: chosen?.windSpeed10m,
+      swellPeriodS: chosen?.swellPeriod,
+    })
+    return `${spotName}: best ${whenText} based on your saved preferences${strictText}. ${prefPhrase}`
+  }
+
+  const scored = (state.scored ?? []).find((s) => s.spotId === spotId)
+  const reasons = Array.isArray(scored?.reasons) ? scored!.reasons.slice(0, 2).join("; ") : null
+  const row = state.hourliesBySpot?.[spotId] as SpotConditions | undefined | null
+  const prefPhrase = buildPreferenceAlignmentPhrase(state, {
+    spotId,
+    distanceKm: scored?.distanceKm,
+    waveHeightM: row?.waveHeight,
+    windKmh: row?.windSpeed10m ?? row?.windSpeed,
+    swellPeriodS: row?.swellPeriod,
+  })
+  return `${spotName}: best match right now based on your saved preferences${strictText}. ${
+    reasons ? `Why: ${reasons}. ` : ""
+  }${prefPhrase}`
 }
 
 function computeReasoningNeed(state: SurfAgentStateType, args: {
@@ -724,6 +889,8 @@ Return only structured fields. For dates, use ISO strings for windowStart/window
       afterNoNow.title = copy.title
       afterNoNow.message = copy.message
     }
+    // Keep rationale aligned with the final snapped/overridden `spotId`.
+    afterNoNow.rationale = buildAlignedRationale(state, afterNoNow)
   }
   return { decision: afterNoNow }
 }
