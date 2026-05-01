@@ -5,6 +5,14 @@ import type { User } from '@/types/user/User'
 
 export type SurferAbility = 'beginner' | 'intermediate' | 'advanced'
 
+/** Prefer 2 m wind for surf UX — matches `scoreSpot`. Fallback: legacy `windSpeed`, then 10 m. */
+export function windSpeedKmhForSurf(
+  conditions: Pick<SpotConditions, "windSpeed2m" | "windSpeed" | "windSpeed10m">,
+): number {
+  const v = conditions.windSpeed2m ?? conditions.windSpeed ?? conditions.windSpeed10m
+  return v != null && Number.isFinite(v) ? v : 0
+}
+
 export interface ScoringInput {
   swellHeight: number // meters
   swellPeriod: number // seconds
@@ -26,7 +34,7 @@ export function toScoringInput(
   spot: Spot,
   user: User
 ): ScoringInput {
-  const wind2m = conditions.windSpeed2m ?? conditions.windSpeed ?? 0
+  const wind2m = windSpeedKmhForSurf(conditions)
   return {
     swellHeight: conditions.swellHeight,
     swellPeriod: conditions.swellPeriod,

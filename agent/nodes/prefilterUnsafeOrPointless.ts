@@ -1,4 +1,5 @@
 import type { SurfAgentStateType, InterpretedSpot } from "../state"
+import { windSpeedKmhForSurf } from "@/lib/shared/scoring"
 import { isDefinitelyUnsuitable } from "@/lib/shared/suitableSpotFilter"
 import { getSpotById } from "@/lib/shared/spots"
 import { isActiveUserMax, isActiveUserMin } from "@/lib/shared/preferenceBounds"
@@ -25,7 +26,7 @@ export function prefilterUnsafeOrPointless(
     const unsuitable = isDefinitelyUnsuitable(spot, conditions, user)
     if (unsuitable.unsuitable) return false
     if (conditions.waveHeight < FLAT_THRESHOLD) return false
-    const wind = conditions.windSpeed10m ?? conditions.windSpeed ?? 0
+    const wind = windSpeedKmhForSurf(conditions)
     if (wind >= EXTREME_WIND_KMH) return false
     if (prefs?.reefAllowed === false && spot.type === "reef") return false
     if (prefs?.sandAllowed === false && spot.type === "beach") return false

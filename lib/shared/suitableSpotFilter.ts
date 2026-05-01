@@ -2,6 +2,7 @@ import type { Spot } from "./spots/Spot"
 import type { SpotConditions } from "./types"
 import type { User } from "@/types/user/User"
 import { UNSET_MAX_WAVE_HEIGHT_M, UNSET_MAX_WIND_KMH, isActiveUserMax } from "./preferenceBounds"
+import { windSpeedKmhForSurf } from "./scoring"
 
 export type UnsuitableResult = { unsuitable: boolean; reason?: string }
 
@@ -20,7 +21,7 @@ export function isDefinitelyUnsuitable(
   const maxWindKmh = isActiveUserMax(preferences?.maxWindSpeedKnots)
     ? preferences.maxWindSpeedKnots * 1.852
     : UNSET_MAX_WIND_KMH
-  const windKmh = conditions.windSpeed10m
+  const windKmh = windSpeedKmhForSurf(conditions)
   const waveHeight = conditions.waveHeight
 
   switch (skill) {

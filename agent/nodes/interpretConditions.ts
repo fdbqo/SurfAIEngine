@@ -2,7 +2,7 @@ import type { SurfAgentStateType, InterpretedSpot } from "../state"
 import type { SpotConditions } from "@/lib/shared/types"
 import type { Spot } from "@/lib/shared/spots"
 import { getSpotById } from "@/lib/shared/spots"
-import { scoreSpot, toScoringInput } from "@/lib/shared/scoring"
+import { scoreSpot, toScoringInput, windSpeedKmhForSurf } from "@/lib/shared/scoring"
 import type { User } from "@/types/user/User"
 
 function windLabel(spot: Spot, windDir: number, windSpeedKmh: number): InterpretedSpot["windLabel"] {
@@ -67,7 +67,7 @@ export function interpretConditions(
     if (conditions) {
       const wh = conditions.waveHeight
       const period = conditions.swellPeriod
-      const windKmh = conditions.windSpeed10m ?? conditions.windSpeed ?? 0
+      const windKmh = windSpeedKmhForSurf(conditions)
       const windDirLabel = windLabel(spot, conditions.windDirection, windKmh)
       const windS = windStrengthLabel(windKmh)
       const waveL = waveSizeLabel(wh)
@@ -119,8 +119,8 @@ export function interpretConditions(
     interpretedBySpot[s.spotId] = {
       nowText,
       forecastText,
-      windLabel: conditions ? windLabel(spot, conditions.windDirection, conditions.windSpeed10m ?? 0) : undefined,
-      windStrengthLabel: conditions ? windStrengthLabel(conditions.windSpeed10m ?? 0) : undefined,
+      windLabel: conditions ? windLabel(spot, conditions.windDirection, windSpeedKmhForSurf(conditions)) : undefined,
+      windStrengthLabel: conditions ? windStrengthLabel(windSpeedKmhForSurf(conditions)) : undefined,
       waveSizeLabel: conditions ? waveSizeLabel(conditions.waveHeight) : undefined,
       swellQualityLabel: conditions ? swellQualityLabel(conditions.swellHeight, conditions.swellPeriod) : undefined,
       envQualityScoreNow,

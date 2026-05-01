@@ -20,6 +20,7 @@ import { formatTimeOfDayForPrompt, type TimeOfDayLabel } from "../utils/notifica
 import { resolvedMaxDistanceKm } from "../utils/preferenceRanking"
 import { formatLlmPrefsSummary } from "../utils/preferencePrompt"
 import { normaliseExternalSpotId } from "@/lib/shared/spotIdInput"
+import { windSpeedKmhForSurf } from "@/lib/shared/scoring"
 
 /** aligns with Expo/Web Push practical limits after sanitization (two lines) */
 const PUSH_MESSAGE_BODY_MAX = 240
@@ -135,14 +136,14 @@ function waveCategoryTitle(meters: number): string {
   return w.charAt(0).toUpperCase() + w.slice(1)
 }
 
-/** Line 1: wind / surface quality (no wave numbers). */
+/** Line 1: wind / surface quality (no wave numbers). Pass surf-relevant wind km/h (2 m for live, 10 m for forecast windows). */
 function buildPushWindConditionsLine(args: {
   spotId: string
-  windSpeed10m?: number
+  windSpeedKmh?: number
   windDirection?: number
 }): string {
   const spot = getSpotById(args.spotId)
-  const ws = args.windSpeed10m
+  const ws = args.windSpeedKmh
   const wd = args.windDirection
   if (!spot || ws == null || !Number.isFinite(ws) || wd == null || !Number.isFinite(wd)) {
     return "Forecast looks good for this window"
@@ -309,7 +310,7 @@ function buildSnappedWindowPushCopy(
   const units = state.user?.rawUser?.units
   const line1 = buildPushWindConditionsLine({
     spotId: chosen.spotId,
-    windSpeed10m: chosen.windSpeed10m,
+    windSpeedKmh: chosen.windSpeed10m,
     windDirection: chosen.windDirection,
   })
   const line2 = buildPushWaveSizeLine(chosen.waveHeight, units?.waveHeight)
@@ -326,7 +327,7 @@ function buildNowPushCopy(state: SurfAgentStateType, spotId: string): { title: s
   const units = state.user?.rawUser?.units
   const line1 = buildPushWindConditionsLine({
     spotId,
-    windSpeed10m: row?.windSpeed10m ?? row?.windSpeed,
+    windSpeedKmh: row ? windSpeedKmhForSurf(row) : undefined,
     windDirection: row?.windDirection,
   })
   const line2 = buildPushWaveSizeLine(row?.waveHeight, units?.waveHeight)
@@ -372,7 +373,7 @@ function buildAlignedRationale(state: SurfAgentStateType, decision: AgentDecisio
     spotId,
     distanceKm: scored?.distanceKm,
     waveHeightM: row?.waveHeight,
-    windKmh: row?.windSpeed10m ?? row?.windSpeed,
+    windKmh: row ? windSpeedKmhForSurf(row) : undefined,
     swellPeriodS: row?.swellPeriod,
   })
   return `${spotName}: best match right now based on your saved preferences${strictText}. ${
