@@ -43,6 +43,34 @@ describe("selfReviewAndValidation", () => {
     expect(out.review?.verdict).toBe("approve")
   })
 
+  it("does not require next_window spot to be in topCandidates (windows are the candidate set)", () => {
+    const windowStart = new Date("2026-03-26T06:00:00.000Z")
+    const out = selfReviewAndValidation(
+      makeState({
+        decision: {
+          notify: true,
+          spotId: "spot-window-only",
+          when: "next_window",
+          windowStart,
+        },
+        // Deliberately omit the spot from topCandidates to reproduce the reported failure mode.
+        topCandidates: [{ spotId: "spot-live", summary: "s", envScore: 8, userSuitability: 8 }],
+        forecastWindows: [
+          {
+            spotId: "spot-window-only",
+            spotName: "Window Spot",
+            start: windowStart,
+            end: new Date(windowStart.getTime() + 3 * 60 * 60 * 1000),
+            envScore: 10,
+            userSuitability: 10,
+            summary: "future great",
+          },
+        ],
+      }),
+    )
+    expect(out.review?.verdict).toBe("approve")
+  })
+
   it("rejects next_window when selected window is missing", () => {
     const out = selfReviewAndValidation(
       makeState({

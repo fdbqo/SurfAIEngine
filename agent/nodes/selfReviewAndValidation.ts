@@ -23,13 +23,6 @@ export function selfReviewAndValidation(state: SurfAgentStateType): Partial<Surf
     return { review }
   }
 
-  const chosenInCandidates = topCandidates.some((c) => c.spotId === decision.spotId)
-  if (!chosenInCandidates) {
-    review.verdict = "reject"
-    review.issues = ["Chosen spot not in candidate set"]
-    return { review }
-  }
-
   const { minUserSuitability, minEnvScoreToNotify, minConfidence, minConfidenceToNotify } = agentConfig.selfReview
   const isWindowDecision = decision.when === "next_window"
   if (isWindowDecision) {
@@ -38,6 +31,8 @@ export function selfReviewAndValidation(state: SurfAgentStateType): Partial<Surf
       review.issues = ["next_window decision missing windowStart"]
       return { review }
     }
+    // For forecast-planner window decisions, the candidate set is the computed forecast window list.
+    // A spot can be a valid window choice even if it's not present in `topCandidates` (which is live-now only).
     const chosenWindow = forecastWindows.find(
       (w) => w.spotId === decision.spotId && w.start.getTime() === decision.windowStart!.getTime(),
     )
@@ -61,6 +56,13 @@ export function selfReviewAndValidation(state: SurfAgentStateType): Partial<Surf
       return { review }
     }
   } else {
+    // For "now" decisions, enforce that the chosen spot is one of the top live candidates.
+    const chosenInCandidates = topCandidates.some((c) => c.spotId === decision.spotId)
+    if (!chosenInCandidates) {
+      review.verdict = "reject"
+      review.issues = ["Chosen spot not in candidate set"]
+      return { review }
+    }
     const chosenScore = scored.find((s) => s.spotId === decision.spotId)
     if (chosenScore && chosenScore.userSuitability < minUserSuitability) {
       review.verdict = "revise"
